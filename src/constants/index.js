@@ -37,6 +37,8 @@ export const DEFAULT_CONFIG = {
   openTime:     '08:00',
   closeTime:    '24:00',
   dayStartHour: 8,
+  universities: [],
+  colleges:     [],
 };
 
 export const DEFAULT_PRICING = {

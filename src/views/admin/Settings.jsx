@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Save, Wifi, Building2, Users, Tag } from 'lucide-react';
+import { Save, Wifi, Building2, Users, Tag, GraduationCap, Plus, X } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { STORAGE_KEYS, DEFAULT_CONFIG, DEFAULT_PRICING } from '../../constants';
 import { logActivity } from '../../utils';
@@ -13,6 +13,10 @@ export default function AdminSettings({ user, config, setConfig, toast }) {
   const [capForm, setCapForm] = useState({ capacity: config.capacity || 50, openTime: config.openTime || '08:00', closeTime: config.closeTime || '24:00' });
   const [wifiForm, setWifiForm] = useState({ wifiName: config.wifiName || '' });
   const [pricingForm, setPricingForm] = useState({ hourly: pricing.hourly ?? 15, dayStartHour: config.dayStartHour ?? 8 });
+  const [universities, setUniversities] = useState(config.universities || []);
+  const [colleges, setColleges] = useState(config.colleges || []);
+  const [newUni, setNewUni] = useState('');
+  const [newCollege, setNewCollege] = useState('');
 
   const activeSessions = sessions.filter(s => s.status === 'active');
 
@@ -125,6 +129,89 @@ export default function AdminSettings({ user, config, setConfig, toast }) {
         <button
           onClick={savePricingSection}
           className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
+        >
+          <Save size={14}/>حفظ
+        </button>
+      </div>
+
+      {/* Universities & Colleges */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
+        <div className="flex items-center gap-2 mb-4">
+          <GraduationCap size={18} className="text-purple-500"/>
+          <h2 className="font-semibold text-navy">الجامعات والكليات</h2>
+        </div>
+
+        {/* Universities */}
+        <div className="mb-5">
+          <label className="text-sm font-medium text-navy-700 mb-2 block">الجامعات</label>
+          <div className="flex gap-2 mb-2">
+            <input
+              value={newUni}
+              onChange={e => setNewUni(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newUni.trim()) {
+                  setUniversities([...universities, newUni.trim()]);
+                  setNewUni('');
+                }
+              }}
+              placeholder="أضف جامعة…"
+              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-colors"
+            />
+            <button
+              onClick={() => { if (newUni.trim()) { setUniversities([...universities, newUni.trim()]); setNewUni(''); }}}
+              className="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 p-2 rounded-xl transition-colors cursor-pointer"
+            >
+              <Plus size={16}/>
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {universities.map((u, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-sm px-3 py-1.5 rounded-lg">
+                {u}
+                <button onClick={() => setUniversities(universities.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500 cursor-pointer"><X size={13}/></button>
+              </span>
+            ))}
+            {universities.length === 0 && <span className="text-xs text-gray-400">لم تُضف جامعات بعد</span>}
+          </div>
+        </div>
+
+        {/* Colleges */}
+        <div className="mb-4">
+          <label className="text-sm font-medium text-navy-700 mb-2 block">الكليات</label>
+          <div className="flex gap-2 mb-2">
+            <input
+              value={newCollege}
+              onChange={e => setNewCollege(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newCollege.trim()) {
+                  setColleges([...colleges, newCollege.trim()]);
+                  setNewCollege('');
+                }
+              }}
+              placeholder="أضف كلية…"
+              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 transition-colors"
+            />
+            <button
+              onClick={() => { if (newCollege.trim()) { setColleges([...colleges, newCollege.trim()]); setNewCollege(''); }}}
+              className="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 p-2 rounded-xl transition-colors cursor-pointer"
+            >
+              <Plus size={16}/>
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {colleges.map((c, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-sm px-3 py-1.5 rounded-lg">
+                {c}
+                <button onClick={() => setColleges(colleges.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500 cursor-pointer"><X size={13}/></button>
+              </span>
+            ))}
+            {colleges.length === 0 && <span className="text-xs text-gray-400">لم تُضف كليات بعد</span>}
+          </div>
+        </div>
+
+        <button
+          onClick={() => saveSection({ universities, colleges })}
+          className="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
         >
           <Save size={14}/>حفظ
         </button>

@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Download, Wallet, CreditCard } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
-import { STORAGE_KEYS } from '../../constants';
+import { STORAGE_KEYS, DEFAULT_CONFIG } from '../../constants';
 import { generateId, generateStudentId, formatDate, logActivity, exportCSV, getActiveSubscription } from '../../utils';
-import { Modal, Input, Textarea, Badge, SearchInput, ConfirmDialog } from '../../components/ui';
+import { Modal, Input, Select, Textarea, Badge, SearchInput, ConfirmDialog } from '../../components/ui';
 
 export default function AdminStudents({ user, config, toast }) {
   const [students, saveStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
@@ -17,7 +17,7 @@ export default function AdminStudents({ user, config, toast }) {
   const [editing, setEditing]       = useState(null);
   const [selected, setSelected]     = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
-  const [form, setForm]   = useState({ name:'', phone:'', memberNumber:'', email:'', tags:'', notes:'' });
+  const [form, setForm]   = useState({ name:'', phone:'', memberNumber:'', email:'', tags:'', notes:'', university:'', college:'', academicYear:'' });
   const [errors, setErrors] = useState({});
 
   // Wallet top-up modal
@@ -35,8 +35,8 @@ export default function AdminStudents({ user, config, toast }) {
     getActiveSubscription(selected.id).then(sub => setSelectedActiveSub(sub));
   }, [selected?.id]);
 
-  const openAdd = () => { setEditing(null); setForm({name:'',phone:'',memberNumber:'',email:'',tags:'',notes:''}); setErrors({}); setShowForm(true); };
-  const openEdit = (s) => { setEditing(s); setForm({name:s.name,phone:s.phone||'',memberNumber:s.memberNumber||'',email:s.email||'',tags:(s.tags||[]).join(', '),notes:s.notes||''}); setErrors({}); setShowForm(true); };
+  const openAdd = () => { setEditing(null); setForm({name:'',phone:'',memberNumber:'',email:'',tags:'',notes:'',university:'',college:'',academicYear:''}); setErrors({}); setShowForm(true); };
+  const openEdit = (s) => { setEditing(s); setForm({name:s.name,phone:s.phone||'',memberNumber:s.memberNumber||'',email:s.email||'',tags:(s.tags||[]).join(', '),notes:s.notes||'',university:s.university||'',college:s.college||'',academicYear:s.academicYear||''}); setErrors({}); setShowForm(true); };
 
   const validate = () => {
     const e = {};
@@ -48,12 +48,12 @@ export default function AdminStudents({ user, config, toast }) {
     if (!validate()) return;
     const tags = form.tags.split(',').map(t=>t.trim()).filter(Boolean);
     if (editing) {
-      saveStudents(students.map(s => s.id===editing.id ? {...s,...form,tags,memberNumber:form.memberNumber.trim()} : s));
+      saveStudents(students.map(s => s.id===editing.id ? {...s,...form,tags,memberNumber:form.memberNumber.trim(),university:form.university,college:form.college,academicYear:form.academicYear} : s));
       logActivity('تعديل طالب', form.name, user.id);
       toast('تم تعديل بيانات الطالب', 'success');
     } else {
       const studentId = await generateStudentId();
-      const ns = { id:generateId('stu'), studentId, name:form.name.trim(), phone:form.phone.trim(), memberNumber:form.memberNumber.trim(), email:form.email.trim(), tags, notes:form.notes.trim(), walletBalance: 0, createdAt:new Date().toISOString() };
+      const ns = { id:generateId('stu'), studentId, name:form.name.trim(), phone:form.phone.trim(), memberNumber:form.memberNumber.trim(), email:form.email.trim(), university:form.university, college:form.college, academicYear:form.academicYear, tags, notes:form.notes.trim(), walletBalance: 0, createdAt:new Date().toISOString() };
       saveStudents([...students, ns]);
       logActivity('إضافة طالب', `${ns.name} — ${ns.studentId}`, user.id);
       toast('تمت إضافة الطالب', 'success');
@@ -70,8 +70,8 @@ export default function AdminStudents({ user, config, toast }) {
 
   const handleExport = () => {
     exportCSV('students.csv',
-      ['الكود', 'الاسم', 'رقم العضوية', 'الهاتف', 'البريد الإلكتروني', 'الوسوم', 'تاريخ التسجيل'],
-      students.map(s => [s.studentId, s.name, s.memberNumber||'', s.phone||'', s.email||'', (s.tags||[]).join(' | '), s.createdAt?.slice(0,10)||''])
+      ['الكود', 'الاسم', 'رقم العضوية', 'الهاتف', 'الجامعة', 'الكلية', 'السنة الدراسية', 'البريد الإلكتروني', 'الوسوم', 'تاريخ التسجيل'],
+      students.map(s => [s.studentId, s.name, s.memberNumber||'', s.phone||'', s.university||'', s.college||'', s.academicYear||'', s.email||'', (s.tags||[]).join(' | '), s.createdAt?.slice(0,10)||''])
     );
   };
 
@@ -163,19 +163,25 @@ export default function AdminStudents({ user, config, toast }) {
               <th className="px-4 py-3 text-right font-semibold">الاسم</th>
               <th className="px-4 py-3 text-right font-semibold">رقم النظام</th>
               <th className="px-4 py-3 text-right font-semibold">الهاتف</th>
+              <th className="px-4 py-3 text-right font-semibold">الجامعة</th>
+              <th className="px-4 py-3 text-right font-semibold">الكلية</th>
+              <th className="px-4 py-3 text-right font-semibold">السنة</th>
               <th className="px-4 py-3 text-right font-semibold">تاريخ التسجيل</th>
               <th className="px-4 py-3 text-right font-semibold">الوسوم</th>
               <th className="px-4 py-3 text-right font-semibold">إجراءات</th>
             </tr></thead>
             <tbody>
               {filtered.length===0 ? (
-                <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">لا توجد نتائج</td></tr>
+                <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">لا توجد نتائج</td></tr>
               ) : filtered.map(s => (
                 <tr key={s.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
                   <td className="px-4 py-3"><code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">{s.memberNumber || s.studentId}</code></td>
                   <td className="px-4 py-3"><button onClick={()=>{setSelected(s);setShowProfile(true);}} className="font-medium text-navy hover:text-indigo-600 transition-colors cursor-pointer">{s.name}</button></td>
                   <td className="px-4 py-3 text-gray-400 text-xs font-mono">{s.studentId}</td>
                   <td className="px-4 py-3 text-gray-500">{s.phone||'—'}</td>
+                  <td className="px-4 py-3 text-gray-500">{s.university||'—'}</td>
+                  <td className="px-4 py-3 text-gray-500">{s.college||'—'}</td>
+                  <td className="px-4 py-3 text-gray-500">{s.academicYear ? `السنة ${s.academicYear}` : '—'}</td>
                   <td className="px-4 py-3 text-gray-400">{formatDate(s.createdAt)}</td>
                   <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{(s.tags||[]).slice(0,3).map((t,i)=><Badge key={i} variant="navy">{t}</Badge>)}</div></td>
                   <td className="px-4 py-3"><div className="flex items-center gap-1">
@@ -198,6 +204,20 @@ export default function AdminStudents({ user, config, toast }) {
             <Input label="رقم العضوية" value={form.memberNumber} onChange={e=>setForm({...form,memberNumber:e.target.value})} placeholder="رقم العضوية (اختياري)" />
           </div>
           <Input label="البريد الإلكتروني" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} type="email" placeholder="example@email.com" />
+          <div className="grid grid-cols-3 gap-3">
+            <Select label="الجامعة" value={form.university} onChange={e=>setForm({...form,university:e.target.value})}>
+              <option value="">— اختر —</option>
+              {(config.universities || []).map(u => <option key={u} value={u}>{u}</option>)}
+            </Select>
+            <Select label="الكلية" value={form.college} onChange={e=>setForm({...form,college:e.target.value})}>
+              <option value="">— اختر —</option>
+              {(config.colleges || []).map(c => <option key={c} value={c}>{c}</option>)}
+            </Select>
+            <Select label="السنة الدراسية" value={form.academicYear} onChange={e=>setForm({...form,academicYear:e.target.value})}>
+              <option value="">— اختر —</option>
+              {['1','2','3','4','5','6'].map(y => <option key={y} value={y}>السنة {y}</option>)}
+            </Select>
+          </div>
           <Input label="الوسوم (مفصولة بفاصلة)" value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})} placeholder="طالب جامعي, صباحي" />
           <Textarea label="ملاحظات" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="أي ملاحظات…" />
         </div>
@@ -219,6 +239,11 @@ export default function AdminStudents({ user, config, toast }) {
                   <h3 className="text-lg font-bold text-navy">{selected.name}</h3>
                   <code className="text-xs text-gray-400">{selected.studentId}</code>
                   {selected.memberNumber && <span className="text-xs text-indigo-600 mr-2">· رقم العضوية: {selected.memberNumber}</span>}
+                  {(selected.university || selected.college || selected.academicYear) && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {[selected.university, selected.college, selected.academicYear ? `السنة ${selected.academicYear}` : ''].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-1 mt-2">
                     {(selected.tags||[]).map((t,i)=><Badge key={i} variant="gold">{t}</Badge>)}
                     {activeSub && (

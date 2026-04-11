@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { UserPlus, Hash } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
-import { STORAGE_KEYS } from '../../constants';
+import { STORAGE_KEYS, DEFAULT_CONFIG } from '../../constants';
 import { generateId, generateStudentId, logActivity } from '../../utils';
-import { Input, Textarea } from '../../components/ui';
+import { Input, Select, Textarea } from '../../components/ui';
 
 export default function CashierNewStudent({ user, config, toast, setActiveView }) {
   const [students, saveStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
   const [sessions, saveSessions] = useStorage(STORAGE_KEYS.SESSIONS, []);
   const [form, setForm] = useState({
     name: '', phone: '', userNumber: '', email: '', tags: '', notes: '',
+    university: '', college: '', academicYear: '',
   });
   const [errors, setErrors] = useState({});
   const [checkinNow, setCheckinNow] = useState(true);
@@ -43,6 +44,9 @@ export default function CashierNewStudent({ user, config, toast, setActiveView }
       phone: form.phone.trim(),
       memberNumber: form.userNumber.trim(),
       email: form.email.trim(),
+      university: form.university,
+      college: form.college,
+      academicYear: form.academicYear,
       tags,
       notes: form.notes.trim(),
       createdAt: new Date().toISOString(),
@@ -64,7 +68,7 @@ export default function CashierNewStudent({ user, config, toast, setActiveView }
       setActiveView?.('cashier_current');
     } else {
       toast(`تم تسجيل ${ns.name}`, 'success');
-      setForm({ name: '', phone: '', userNumber: '', email: '', tags: '', notes: '' });
+      setForm({ name: '', phone: '', userNumber: '', email: '', tags: '', notes: '', university: '', college: '', academicYear: '' });
       setErrors({});
     }
   };
@@ -127,6 +131,22 @@ export default function CashierNewStudent({ user, config, toast, setActiveView }
             type="email"
             placeholder="example@email.com"
           />
+
+          {/* University / College / Year */}
+          <div className="grid grid-cols-3 gap-3">
+            <Select label="الجامعة" value={form.university} onChange={e => setForm({ ...form, university: e.target.value })}>
+              <option value="">— اختر —</option>
+              {(config.universities || []).map(u => <option key={u} value={u}>{u}</option>)}
+            </Select>
+            <Select label="الكلية" value={form.college} onChange={e => setForm({ ...form, college: e.target.value })}>
+              <option value="">— اختر —</option>
+              {(config.colleges || []).map(c => <option key={c} value={c}>{c}</option>)}
+            </Select>
+            <Select label="السنة الدراسية" value={form.academicYear} onChange={e => setForm({ ...form, academicYear: e.target.value })}>
+              <option value="">— اختر —</option>
+              {['1','2','3','4','5','6'].map(y => <option key={y} value={y}>السنة {y}</option>)}
+            </Select>
+          </div>
 
           {/* Tags */}
           <Input
