@@ -153,7 +153,7 @@ function CheckInPanel({ user, config, toast, sessions, saveSessions }) {
 /* ─── New Student panel ─── */
 function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
   const [students, saveStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
-  const [form, setForm]   = useState({ name:'', phone:'', userNumber:'', notes:'' });
+  const [form, setForm]   = useState({ name:'', phone:'', userNumber:'', notes:'', university:'', college:'', academicYear:'' });
   const [errors, setErrors] = useState({});
   const [checkinNow, setCheckinNow] = useState(true);
 
@@ -185,6 +185,9 @@ function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
       name:         form.name.trim(),
       phone:        form.phone.trim(),
       memberNumber: form.userNumber.trim(),
+      university:   form.university,
+      college:      form.college,
+      academicYear: form.academicYear,
       notes:        form.notes.trim(),
       tags:         [],
       createdAt:    new Date().toISOString(),
@@ -206,7 +209,7 @@ function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
     } else {
       toast(`تم تسجيل ${ns.name}`, 'success');
     }
-    setForm({ name:'', phone:'', userNumber:'', notes:'' });
+    setForm({ name:'', phone:'', userNumber:'', notes:'', university:'', college:'', academicYear:'' });
     setErrors({});
   };
 
@@ -236,6 +239,22 @@ function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
         </div>
       </div>
       <Textarea label="ملاحظات" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="أي ملاحظات…" rows={2}/>
+
+      {/* University / College / Year */}
+      <Select label="الجامعة" value={form.university} onChange={e=>setForm({...form,university:e.target.value})}>
+        <option value="">— اختر —</option>
+        {(config.universities || []).map(u => <option key={u} value={u}>{u}</option>)}
+      </Select>
+      <div className="grid grid-cols-2 gap-3">
+        <Select label="الكلية" value={form.college} onChange={e=>setForm({...form,college:e.target.value})}>
+          <option value="">— اختر —</option>
+          {(config.colleges || []).map(c => <option key={c} value={c}>{c}</option>)}
+        </Select>
+        <Select label="السنة" value={form.academicYear} onChange={e=>setForm({...form,academicYear:e.target.value})}>
+          <option value="">— اختر —</option>
+          {['1','2','3','4','5','6'].map(y => <option key={y} value={y}>السنة {y}</option>)}
+        </Select>
+      </div>
 
       {/* Check-in toggle */}
       <label className="flex items-center gap-3 cursor-pointer">
