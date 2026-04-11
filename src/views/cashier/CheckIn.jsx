@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Check, X, Search } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { STORAGE_KEYS } from '../../constants';
@@ -11,6 +11,12 @@ export default function CashierCheckIn({ user, config, toast }) {
   const [search, setSearch]           = useState('');
   const [selected, setSelected]       = useState(null);
   const [sessionType, setSessionType] = useState('regular');
+  const [activeSub, setActiveSub]     = useState(null);
+
+  useEffect(() => {
+    if (!selected) { setActiveSub(null); return; }
+    getActiveSubscription(selected.id).then(sub => setActiveSub(sub));
+  }, [selected?.id]);
 
   const activeIds = new Set(sessions.filter(s => s.status === 'active').map(s => s.studentId));
 
@@ -97,7 +103,6 @@ export default function CashierCheckIn({ user, config, toast }) {
 
           {/* Selected student card */}
           {selected && (() => {
-            const activeSub = getActiveSubscription(selected.id);
             return (
             <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between">

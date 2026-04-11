@@ -1,20 +1,41 @@
-import { useState } from 'react';
-import { Check, Wallet, CreditCard } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Check, Wallet, CreditCard, Loader, ChevronDown, ChevronUp, Plus, Minus, X, UserCheck } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { useLiveTimer } from '../../hooks/useLiveTimer';
 import { STORAGE_KEYS, DEFAULT_PRICING } from '../../constants';
-import { storage, generateId, formatTime, calcElapsedMinutes, calcBestPrice, logActivity, getActiveSubscription, resolveSubscriptionBilling } from '../../utils';
+import { supabase, generateId, formatTime, calcElapsedMinutes, calcBestPrice, logActivity, getActiveSubscription, resolveSubscriptionBilling } from '../../utils';
+import { toSnake } from '../../lib/fieldMaps';
 import { Modal, Badge } from '../../components/ui';
 
 export default function CheckoutModal({ open, onClose, session, config, user, toast, onCheckedOut }) {
   const [pricing]  = useStorage(STORAGE_KEYS.PRICING, DEFAULT_PRICING);
   const [orders]   = useStorage(STORAGE_KEYS.KITCHEN_ORDERS, []);
-  const [invoices, saveInvoices] = useStorage(STORAGE_KEYS.INVOICES, []);
-  const [sessions, saveSessions] = useStorage(STORAGE_KEYS.SESSIONS, []);
+  const [students] = useStorage(STORAGE_KEYS.STUDENTS, []);
+  const [owners]   = useStorage(STORAGE_KEYS.OWNERS, []);
+  const [products] = useStorage(STORAGE_KEYS.PRODUCTS, []);
+  const [staff]    = useStorage(STORAGE_KEYS.STAFF, []);
   const [selectedType, setSelectedType] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
+  const [selectedAdminId, setSelectedAdminId] = useState('');
+  const [activeSub, setActiveSub] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [showOrderDetail, setShowOrderDetail] = useState(false);
+  const [addedItems, setAddedItems] = useState([]);
+  const [addProductId, setAddProductId] = useState('');
+  const [addQty, setAddQty] = useState(1);
   useLiveTimer(30000);
+
+  // Fetch active subscription when modal opens
+  useEffect(() => {
+    if (!open || !session) return;
+    setActiveSub(null);
+    setAddedItems([]);
+    setAddProductId('');
+    setAddQty(1);
+    setSelectedAdminId('');
+    getActiveSubscription(session.studentId).then(sub => setActiveSub(sub));
+  }, [open, session?.studentId]);
 
   if (!open || !session) return null;
 
@@ -26,30 +47,47 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
   const chosenOption  = options.find(o => o.type === chosen) || best;
   const hrs = Math.floor(minutes / 60), mins = minutes % 60;
 
-  // Active subscription check
-  const activeSub = getActiveSubscription(session.studentId);
-  const hasActiveSub = !!activeSub;
+  const hasActiveSub  = !!activeSub;
+  const sessionCost   = hasActiveSub ? 0 : chosenOption.amount;
 
-  // If subscription, session cost = 0
-  const sessionCost = hasActiveSub ? 0 : chosenOption.amount;
-  const grandTotal  = sessionCost + kitchenTotal;
+  const addedTotal      = addedItems.reduce((s, i) => s + i.subtotal, 0);
+  const grandTotal      = sessionCost + kitchenTotal + addedTotal;
 
-  // Wallet balance
-  const allStudents = storage.get(STORAGE_KEYS.STUDENTS) || [];
-  const sessionStudent = allStudents.find(s => s.id === session.studentId);
-  const walletBalance = sessionStudent ? (sessionStudent.walletBalance || 0) : 0;
+  const sessionStudent  = students.find(s => s.id === session.studentId);
+  const walletBalance   = sessionStudent ? (sessionStudent.walletBalance || 0) : 0;
+  const linkedOwners    = owners.filter(o => (o.studentIds || []).includes(session.studentId));
+  const selectedOwner   = linkedOwners.find(o => o.id === selectedOwnerId) || null;
+  const adminStaff      = staff.filter(s => s.role === 'admin' && s.active !== false);
+  const selectedAdmin   = adminStaff.find(s => s.id === selectedAdminId) || null;
+  const availableProducts = products.filter(p => p.available !== false);
+  const needsPayment    = grandTotal > 0;
+  const todayStr        = new Date().toISOString().slice(0, 10);
 
-  // Owners
-  const allOwners = storage.get(STORAGE_KEYS.OWNERS) || [];
-  const linkedOwners = allOwners.filter(o => (o.studentIds || []).includes(session.studentId));
-  const selectedOwner = linkedOwners.find(o => o.id === selectedOwnerId) || null;
+  const handleAddItem = () => {
+    if (!addProductId) return;
+    const prod = availableProducts.find(p => p.id === addProductId);
+    if (!prod) return;
+    const qty = Math.max(1, addQty);
+    setAddedItems(prev => {
+      const existing = prev.find(i => i.productId === addProductId);
+      if (existing) {
+        return prev.map(i => i.productId === addProductId
+          ? { ...i, qty: i.qty + qty, subtotal: (i.qty + qty) * i.unitPrice }
+          : i);
+      }
+      return [...prev, { productId: prod.id, name: prod.name, qty, unitPrice: prod.price, subtotal: prod.price * qty }];
+    });
+    setAddProductId('');
+    setAddQty(1);
+  };
 
-  // If sub active and no kitchen cost, payment method is irrelevant
-  const needsPayment = grandTotal > 0;
+  const handleRemoveAdded = (productId) => {
+    setAddedItems(prev => prev.filter(i => i.productId !== productId));
+  };
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const handleCheckout = async () => {
+    if (isProcessing) return;
 
-  const handleCheckout = () => {
     // Validate payment
     if (needsPayment) {
       if (paymentMethod === 'owner') {
@@ -59,83 +97,163 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
       if (paymentMethod === 'wallet') {
         if (walletBalance < grandTotal) { toast('رصيد المحفظة غير كافٍ', 'error'); return; }
       }
+      if (paymentMethod === 'admin') {
+        if (!selectedAdmin) { toast('اختر الموظف المسؤول', 'error'); return; }
+      }
     }
 
+    setIsProcessing(true);
     const now = new Date().toISOString();
+    const invoiceId = generateId('inv');
 
-    // Handle subscription billing
-    if (hasActiveSub) {
-      const { updatedSub } = resolveSubscriptionBilling(activeSub, minutes, todayStr);
-      const allSubs = storage.get(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS) || [];
-      storage.set(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS, allSubs.map(s => s.id === activeSub.id ? updatedSub : s));
-    }
+    try {
+      const writes = [];
 
-    // Handle owner deduction
-    if (needsPayment && paymentMethod === 'owner') {
-      const updatedOwners = allOwners.map(o =>
-        o.id === selectedOwner.id ? { ...o, balance: (o.balance || 0) - grandTotal } : o
+      // 1. Subscription billing
+      if (hasActiveSub) {
+        const { updatedSub } = resolveSubscriptionBilling(activeSub, minutes, todayStr);
+        writes.push(
+          supabase.from('student_subscriptions').upsert(toSnake({
+            ...updatedSub,
+            id: activeSub.id,
+          }))
+        );
+      }
+
+      // 2. Owner balance deduction
+      if (needsPayment && paymentMethod === 'owner' && selectedOwner) {
+        writes.push(
+          supabase.from('owners').update({
+            balance: (selectedOwner.balance || 0) - grandTotal,
+          }).eq('id', selectedOwner.id)
+        );
+      }
+
+      // 3. Wallet deduction + wallet transaction
+      if (needsPayment && paymentMethod === 'wallet') {
+        writes.push(
+          supabase.from('students').update({
+            wallet_balance: (walletBalance) - grandTotal,
+          }).eq('id', session.studentId)
+        );
+        writes.push(
+          supabase.from('wallet_transactions').insert(toSnake({
+            id: generateId('wtx'),
+            studentId: session.studentId,
+            studentName: session.studentName,
+            type: 'deduct',
+            amount: grandTotal,
+            balanceBefore: walletBalance,
+            balanceAfter: walletBalance - grandTotal,
+            note: 'خصم جلسة',
+            invoiceId,
+            staffId: user.id,
+            createdAt: now,
+          }))
+        );
+      }
+
+      // 4a. Admin charge record
+      if (needsPayment && paymentMethod === 'admin' && selectedAdmin) {
+        writes.push(
+          supabase.from('admin_charges').insert({
+            id: generateId('chg'),
+            admin_id: selectedAdmin.id,
+            admin_name: selectedAdmin.name,
+            invoice_id: invoiceId,
+            session_id: session.id,
+            student_name: session.studentName,
+            amount: grandTotal,
+            note: '',
+            settled: false,
+            created_at: now,
+          })
+        );
+      }
+
+      // 4b. Added items kitchen order
+      if (addedItems.length > 0) {
+        writes.push(
+          supabase.from('kitchen_orders').insert(toSnake({
+            id: generateId('ORD'),
+            sessionId: session.id,
+            studentId: session.studentId,
+            studentName: session.studentName,
+            items: addedItems.map(i => ({
+              productId: i.productId,
+              productName: i.name,
+              qty: i.qty,
+              unitPrice: i.unitPrice,
+              total: i.subtotal,
+            })),
+            total: addedTotal,
+            note: 'أضيف عند الخروج',
+            status: 'completed',
+            createdAt: now,
+            staffId: user.id,
+          }))
+        );
+      }
+
+      const effectivePaymentMethod = !needsPayment ? null : paymentMethod;
+
+      // 4. Invoice insert
+      writes.push(
+        supabase.from('invoices').insert(toSnake({
+          id: invoiceId,
+          sessionId: session.id,
+          studentId: session.studentId,
+          studentName: session.studentName,
+          minutes,
+          priceType: hasActiveSub ? 'subscription' : chosen,
+          pricingLabel: hasActiveSub ? `اشتراك: ${activeSub.planName}` : chosenOption.label,
+          amount: sessionCost,
+          kitchenTotal,
+          total: grandTotal,
+          billingType: hasActiveSub ? 'subscription' : 'normal',
+          subscriptionId: hasActiveSub ? activeSub.id : null,
+          paymentMethod: effectivePaymentMethod,
+          ownerId: effectivePaymentMethod === 'owner' ? selectedOwnerId : null,
+          ...(effectivePaymentMethod === 'admin' ? { adminId: selectedAdminId } : {}),
+          cashierId: user.id,
+          createdAt: now,
+        }))
       );
-      storage.set(STORAGE_KEYS.OWNERS, updatedOwners);
-    }
 
-    // Handle wallet deduction
-    if (needsPayment && paymentMethod === 'wallet') {
-      const invoiceId = generateId('inv');
-      const updatedStudents = allStudents.map(s =>
-        s.id === session.studentId ? { ...s, walletBalance: (s.walletBalance || 0) - grandTotal } : s
+      // 5. Close session
+      writes.push(
+        supabase.from('sessions').update({
+          status: 'closed',
+          check_out_time: now,
+        }).eq('id', session.id)
       );
-      storage.set(STORAGE_KEYS.STUDENTS, updatedStudents);
-      // Create wallet transaction
-      const walletTx = {
-        id: generateId('wtx'),
-        studentId: session.studentId,
-        studentName: session.studentName,
-        type: 'deduct',
-        amount: grandTotal,
-        balanceBefore: walletBalance,
-        balanceAfter: walletBalance - grandTotal,
-        note: 'خصم جلسة',
-        invoiceId,
-        staffId: user.id,
-        createdAt: now,
-      };
-      const existingTxs = storage.get(STORAGE_KEYS.WALLET_TRANSACTIONS) || [];
-      storage.set(STORAGE_KEYS.WALLET_TRANSACTIONS, [walletTx, ...existingTxs]);
+
+      const results = await Promise.all(writes);
+      const firstErr = results.find(r => r.error);
+      if (firstErr?.error) throw firstErr.error;
+
+      // Fire-and-forget log
+      logActivity('تسجيل خروج', `${session.studentName} — ${grandTotal} ${config.currency}`, user.id);
+
+      toast(`تم تسجيل الخروج • ${grandTotal} ${config.currency}`, 'success');
+      onCheckedOut();
+      onClose();
+    } catch (err) {
+      console.error('Checkout error:', err);
+      toast(err?.message || 'حدث خطأ أثناء تسجيل الخروج', 'error');
+    } finally {
+      setIsProcessing(false);
     }
-
-    const effectivePaymentMethod = !needsPayment ? null : paymentMethod;
-
-    const invoice = {
-      id: generateId('inv'),
-      sessionId: session.id,
-      studentId: session.studentId,
-      studentName: session.studentName,
-      minutes,
-      priceType: hasActiveSub ? 'subscription' : chosen,
-      pricingLabel: hasActiveSub ? `اشتراك: ${activeSub.planName}` : chosenOption.label,
-      amount: sessionCost,
-      kitchenTotal,
-      total: grandTotal,
-      billingType: hasActiveSub ? 'subscription' : 'normal',
-      subscriptionId: hasActiveSub ? activeSub.id : undefined,
-      paymentMethod: effectivePaymentMethod,
-      ownerId: effectivePaymentMethod === 'owner' ? selectedOwnerId : undefined,
-      createdAt: now,
-      cashierId: user.id,
-    };
-
-    saveInvoices([invoice, ...invoices]);
-    saveSessions(sessions.map(s => s.id === session.id ? { ...s, status: 'closed', checkOutTime: now, invoiceId: invoice.id } : s));
-    logActivity('تسجيل خروج', `${session.studentName} — ${grandTotal} ${config.currency}`, user.id);
-    toast(`تم تسجيل الخروج • ${grandTotal} ${config.currency}`, 'success');
-    onCheckedOut(); onClose();
   };
 
   return (
     <Modal open={open} onClose={onClose} title="تسجيل الخروج والدفع"
       footer={<div className="flex gap-3 justify-end">
-        <button onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors cursor-pointer">إلغاء</button>
-        <button onClick={handleCheckout} className="bg-teal hover:bg-teal-600 text-white px-6 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"><Check size={15}/><span>تأكيد الخروج</span></button>
+        <button onClick={onClose} disabled={isProcessing} className="px-4 py-2 rounded-xl border border-gray-200 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50">إلغاء</button>
+        <button onClick={handleCheckout} disabled={isProcessing} className="bg-teal hover:bg-teal-600 text-white px-6 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-70">
+          {isProcessing ? <Loader size={15} className="animate-spin"/> : <Check size={15}/>}
+          <span>{isProcessing ? 'جاري المعالجة…' : 'تأكيد الخروج'}</span>
+        </button>
       </div>}>
       <div className="space-y-4">
         {/* Session header */}
@@ -181,13 +299,72 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
           </div>
         )}
 
-        {/* Kitchen orders */}
+        {/* Kitchen orders — expandable detail */}
         {kitchenTotal > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex justify-between items-center">
-            <div><p className="text-sm font-semibold text-amber-900">طلبات المطبخ</p><p className="text-xs text-amber-700">{sessionOrders.length} طلب</p></div>
-            <span className="font-bold text-amber-900">{kitchenTotal.toLocaleString('en-US')} {config.currency}</span>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl overflow-hidden">
+            <button
+              onClick={() => setShowOrderDetail(v => !v)}
+              className="w-full flex justify-between items-center p-3 cursor-pointer text-right"
+            >
+              <div><p className="text-sm font-semibold text-amber-900">طلبات المطبخ</p><p className="text-xs text-amber-700">{sessionOrders.length} طلب</p></div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-amber-900">{kitchenTotal.toLocaleString('en-US')} {config.currency}</span>
+                {showOrderDetail ? <ChevronUp size={14} className="text-amber-700"/> : <ChevronDown size={14} className="text-amber-700"/>}
+              </div>
+            </button>
+            {showOrderDetail && (
+              <div className="border-t border-amber-200 px-3 pb-3 space-y-2 pt-2">
+                {sessionOrders.map(order => (
+                  <div key={order.id}>
+                    {(order.items || []).map((item, idx) => (
+                      <div key={idx} className="flex justify-between text-xs text-amber-800 py-0.5">
+                        <span>{item.productName} × {item.qty}</span>
+                        <span className="font-medium">{item.total.toLocaleString('en-US')} {config.currency}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
+
+        {/* Add items at checkout */}
+        <div className="border border-gray-200 rounded-xl p-3 space-y-2">
+          <p className="text-sm font-semibold text-navy">إضافة منتجات عند الخروج</p>
+          <div className="flex gap-2">
+            <select
+              value={addProductId}
+              onChange={e => setAddProductId(e.target.value)}
+              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300"
+              dir="rtl"
+            >
+              <option value="">اختر منتجاً…</option>
+              {availableProducts.map(p => (
+                <option key={p.id} value={p.id}>{p.name} — {p.price} {config.currency}</option>
+              ))}
+            </select>
+            <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden">
+              <button onClick={() => setAddQty(q => Math.max(1, q - 1))} className="px-2 py-2 hover:bg-gray-100 cursor-pointer transition-colors"><Minus size={12}/></button>
+              <span className="px-2 text-sm font-medium min-w-[2rem] text-center">{addQty}</span>
+              <button onClick={() => setAddQty(q => q + 1)} className="px-2 py-2 hover:bg-gray-100 cursor-pointer transition-colors"><Plus size={12}/></button>
+            </div>
+            <button onClick={handleAddItem} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-sm font-medium cursor-pointer transition-colors"><Plus size={14}/></button>
+          </div>
+          {addedItems.length > 0 && (
+            <div className="space-y-1">
+              {addedItems.map(item => (
+                <div key={item.productId} className="flex justify-between items-center text-xs bg-gray-50 rounded-lg px-3 py-1.5">
+                  <span className="text-gray-700">{item.name} × {item.qty}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-navy">{item.subtotal.toLocaleString('en-US')} {config.currency}</span>
+                    <button onClick={() => handleRemoveAdded(item.productId)} className="text-gray-400 hover:text-red-500 cursor-pointer transition-colors"><X size={12}/></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Grand total */}
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex justify-between items-center">
@@ -195,7 +372,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
           <span className="text-2xl font-bold text-teal">{grandTotal.toLocaleString('en-US')} {config.currency}</span>
         </div>
 
-        {/* Payment method — show if total > 0, or always for non-subscription sessions */}
+        {/* Payment method */}
         {needsPayment && (
           <div className="space-y-2">
             <p className="text-sm font-semibold text-navy">طريقة الدفع:</p>
@@ -234,6 +411,14 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
                   <Wallet size={14}/>حساب
                 </button>
               )}
+              {adminStaff.length > 0 && (
+                <button
+                  onClick={() => { setPaymentMethod('admin'); if (!selectedAdminId && adminStaff.length === 1) setSelectedAdminId(adminStaff[0].id); }}
+                  className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-medium transition-all cursor-pointer flex items-center justify-center gap-2 ${paymentMethod === 'admin' ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
+                >
+                  <UserCheck size={14}/>على ادمن
+                </button>
+              )}
             </div>
 
             {/* Wallet info */}
@@ -249,6 +434,34 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
                   <span className="text-xs bg-teal-100 text-teal-700 px-2 py-1 rounded-full font-medium">رصيد كافٍ</span>
                 ) : (
                   <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-medium">رصيد غير كافٍ</span>
+                )}
+              </div>
+            )}
+
+            {/* Admin selection */}
+            {paymentMethod === 'admin' && adminStaff.length > 0 && (
+              <div className="space-y-2">
+                {adminStaff.length > 1 && (
+                  <select
+                    value={selectedAdminId}
+                    onChange={e => setSelectedAdminId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-orange-300"
+                    dir="rtl"
+                  >
+                    <option value="">اختر الموظف…</option>
+                    {adminStaff.map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                )}
+                {selectedAdmin && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 text-sm flex justify-between items-center">
+                    <div>
+                      <p className="font-semibold text-navy">{selectedAdmin.name}</p>
+                      <p className="text-xs text-orange-600 mt-0.5">سيُسجَّل المبلغ دَيناً على الموظف</p>
+                    </div>
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium">على ادمن</span>
+                  </div>
                 )}
               </div>
             )}

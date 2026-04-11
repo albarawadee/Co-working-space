@@ -1,15 +1,31 @@
-import { storage } from './storage';
-import { STORAGE_KEYS, DEFAULT_CONFIG, DEFAULT_PRICING, DEFAULT_STAFF, DEFAULT_CATEGORIES, DEFAULT_PRODUCTS } from '../constants';
+import { supabase } from '../lib/supabaseClient';
+import { toSnake } from '../lib/fieldMaps';
+import { STORAGE_KEYS } from '../constants';
 
-export { storage };
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const IS_SUPABASE_CONFIGURED = SUPABASE_URL.length > 0 && !SUPABASE_URL.includes('your-project');
+
+function lsGet(key, def = null) {
+  try { const r = localStorage.getItem(key); return r === null ? def : JSON.parse(r); } catch { return def; }
+}
+function lsSet(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
 
 export function generateId(prefix = 'id') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-export function generateStudentId() {
-  const students = storage.get(STORAGE_KEYS.STUDENTS) || [];
-  const existing = new Set(students.map(s => s.studentId));
+export async function generateStudentId() {
+  if (!IS_SUPABASE_CONFIGURED) {
+    const students = lsGet(STORAGE_KEYS.STUDENTS, []);
+    const existing = new Set(students.map(s => s.studentId));
+    let id;
+    do { id = 'LIB-' + Math.floor(10000 + Math.random() * 90000); } while (existing.has(id));
+    return id;
+  }
+  const { data } = await supabase.from('students').select('student_id');
+  const existing = new Set((data || []).map(r => r.student_id));
   let id;
   do { id = 'LIB-' + Math.floor(10000 + Math.random() * 90000); } while (existing.has(id));
   return id;
@@ -35,14 +51,31 @@ export function calcElapsedMinutes(checkInTime) {
 }
 
 export function calcBestPrice(minutes, pricing) {
-  const hours = minutes / 60;
-  const hourlyTotal   = Math.max(1, Math.ceil(hours)) * pricing.hourly;
-  const halfDayTotal  = pricing.halfDay;
-  const fullDayTotal  = pricing.fullDay;
+  const fullDays = Math.floor(minutes / 1440);
+  const remMinutes = minutes % 1440;
+  const billableHours = remMinutes === 0 ? 0 : Math.max(1, Math.floor((remMinutes + 45) / 60));
+
+  if (fullDays > 0 && remMinutes === 0) {
+    const amount = fullDays * pricing.fullDay;
+    const opt = { type: 'fullDay', label: `${fullDays} يوم كامل`, amount };
+    return { options: [opt], best: opt };
+  }
+
+  if (fullDays > 0) {
+    const amount = fullDays * pricing.fullDay + billableHours * pricing.hourly;
+    const opt = { type: 'hourly', label: `${fullDays} يوم + ${billableHours} ساعة`, amount };
+    return { options: [opt], best: opt };
+  }
+
+  // Standard single-day options
+  const effectiveHours = Math.max(1, billableHours);
+  const hourlyTotal  = effectiveHours * pricing.hourly;
+  const halfDayTotal = pricing.halfDay;
+  const fullDayTotal = pricing.fullDay;
   const options = [
-    { type: 'hourly',   label: `أجر ساعي (${Math.max(1, Math.ceil(hours))} ساعة)`, amount: hourlyTotal  },
-    { type: 'halfDay',  label: `نصف يوم (${pricing.halfDayHours} ساعات)`,           amount: halfDayTotal },
-    { type: 'fullDay',  label: 'يوم كامل',                                            amount: fullDayTotal },
+    { type: 'hourly',  label: `أجر ساعي (${effectiveHours} ساعة)`,        amount: hourlyTotal  },
+    { type: 'halfDay', label: `نصف يوم (${pricing.halfDayHours} ساعات)`,   amount: halfDayTotal },
+    { type: 'fullDay', label: 'يوم كامل',                                   amount: fullDayTotal },
   ];
   const best = options.reduce((min, o) => o.amount < min.amount ? o : min, options[0]);
   return { options, best };
@@ -58,51 +91,68 @@ export function exportCSV(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
-export function logActivity(action, details, staffId = '') {
-  const logs = storage.get(STORAGE_KEYS.DAILY_LOGS) || [];
-  const entry = { id: generateId('log'), action, details, staffId, timestamp: new Date().toISOString() };
-  storage.set(STORAGE_KEYS.DAILY_LOGS, [entry, ...logs].slice(0, 500));
+// Fire-and-forget — callers need not await
+export function logActivity(action, details = '', staffId = '') {
+  const entry = {
+    id: generateId('log'),
+    action,
+    details,
+    staff_id: staffId,
+    timestamp: new Date().toISOString(),
+  };
+  if (!IS_SUPABASE_CONFIGURED) {
+    const logs = lsGet(STORAGE_KEYS.DAILY_LOGS, []);
+    lsSet(STORAGE_KEYS.DAILY_LOGS, [{ ...entry, staffId: entry.staff_id }, ...logs].slice(0, 500));
+    return;
+  }
+  supabase.from('daily_logs').insert(entry).then(({ error }) => {
+    if (error) console.error('logActivity error:', error);
+  });
 }
 
-export function initializeDefaultData() {
-  if (!storage.get(STORAGE_KEYS.CONFIG))               storage.set(STORAGE_KEYS.CONFIG,               DEFAULT_CONFIG);
-  if (!storage.get(STORAGE_KEYS.PRICING))              storage.set(STORAGE_KEYS.PRICING,              DEFAULT_PRICING);
-  if (!storage.get(STORAGE_KEYS.STAFF))                storage.set(STORAGE_KEYS.STAFF,                DEFAULT_STAFF);
-  if (!storage.get(STORAGE_KEYS.CATEGORIES))           storage.set(STORAGE_KEYS.CATEGORIES,           DEFAULT_CATEGORIES);
-  if (!storage.get(STORAGE_KEYS.PRODUCTS))             storage.set(STORAGE_KEYS.PRODUCTS,             DEFAULT_PRODUCTS);
-  if (!storage.get(STORAGE_KEYS.STUDENTS))             storage.set(STORAGE_KEYS.STUDENTS,             []);
-  if (!storage.get(STORAGE_KEYS.SESSIONS))             storage.set(STORAGE_KEYS.SESSIONS,             []);
-  if (!storage.get(STORAGE_KEYS.INVOICES))             storage.set(STORAGE_KEYS.INVOICES,             []);
-  if (!storage.get(STORAGE_KEYS.KITCHEN_ORDERS))       storage.set(STORAGE_KEYS.KITCHEN_ORDERS,       []);
-  if (!storage.get(STORAGE_KEYS.EXPENSES))             storage.set(STORAGE_KEYS.EXPENSES,             []);
-  if (!storage.get(STORAGE_KEYS.DAILY_LOGS))           storage.set(STORAGE_KEYS.DAILY_LOGS,           []);
-  if (!storage.get(STORAGE_KEYS.OWNERS))               storage.set(STORAGE_KEYS.OWNERS,               []);
-  if (!storage.get(STORAGE_KEYS.DEPOSITS))             storage.set(STORAGE_KEYS.DEPOSITS,             []);
-  if (!storage.get(STORAGE_KEYS.WALLET_TRANSACTIONS))  storage.set(STORAGE_KEYS.WALLET_TRANSACTIONS,  []);
-  if (!storage.get(STORAGE_KEYS.SUBSCRIPTION_PLANS))   storage.set(STORAGE_KEYS.SUBSCRIPTION_PLANS,   []);
-  if (!storage.get(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS))storage.set(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS,[]);
-}
-
-export function getActiveSubscription(studentId) {
-  const subs = storage.get(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS) || [];
+export async function getActiveSubscription(studentId) {
   const todayStr = new Date().toISOString().slice(0, 10);
-  const active = subs.filter(s =>
-    s.studentId === studentId &&
-    s.status === 'active' &&
-    s.expiryDate >= todayStr
-  );
-  if (!active.length) return null;
-  // Pick earliest expiry
-  return active.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0];
+  if (!IS_SUPABASE_CONFIGURED) {
+    const subs = lsGet(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS, []);
+    const active = subs.filter(s => s.studentId === studentId && s.status === 'active' && s.expiryDate >= todayStr);
+    if (!active.length) return null;
+    return active.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate))[0];
+  }
+  const { data, error } = await supabase
+    .from('student_subscriptions')
+    .select('*')
+    .eq('student_id', studentId)
+    .eq('status', 'active')
+    .gte('expiry_date', todayStr)
+    .order('expiry_date', { ascending: true });
+  if (error) { console.error('getActiveSubscription error:', error); return null; }
+  if (!data || data.length === 0) return null;
+  const row = data[0];
+  // Convert snake_case → camelCase manually for critical fields
+  return {
+    id:             row.id,
+    studentId:      row.student_id,
+    studentName:    row.student_name,
+    planId:         row.plan_id,
+    planName:       row.plan_name,
+    quotaType:      row.quota_type,
+    totalQuota:     row.total_quota,
+    remainingQuota: row.remaining_quota,
+    usedDates:      row.used_dates || [],
+    startDate:      row.start_date,
+    expiryDate:     row.expiry_date,
+    status:         row.status,
+    activatedBy:    row.activated_by,
+    createdAt:      row.created_at,
+  };
 }
 
 export function resolveSubscriptionBilling(sub, minutes, todayStr) {
   const updatedSub = { ...sub, usedDates: [...(sub.usedDates || [])] };
   if (sub.quotaType === 'hours') {
-    const hoursUsed = Math.ceil(minutes / 60);
+    const hoursUsed = Math.max(1, Math.floor((minutes + 45) / 60));
     updatedSub.remainingQuota = Math.max(0, (sub.remainingQuota || 0) - hoursUsed);
   } else {
-    // days-type: only deduct once per day
     if (!updatedSub.usedDates.includes(todayStr)) {
       updatedSub.usedDates.push(todayStr);
       updatedSub.remainingQuota = Math.max(0, (sub.remainingQuota || 0) - 1);
@@ -111,3 +161,6 @@ export function resolveSubscriptionBilling(sub, minutes, todayStr) {
   updatedSub.status = updatedSub.remainingQuota <= 0 ? 'exhausted' : 'active';
   return { updatedSub };
 }
+
+// Export supabase for components that need direct access
+export { supabase };

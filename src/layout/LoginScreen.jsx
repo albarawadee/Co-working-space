@@ -4,7 +4,7 @@ import { useStorage } from '../hooks/useStorage';
 import { STORAGE_KEYS } from '../constants';
 
 export function LoginScreen({ onLogin }) {
-  const [staff] = useStorage(STORAGE_KEYS.STAFF, []);
+  const [staff, , , staffLoading] = useStorage(STORAGE_KEYS.STAFF, []);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -102,7 +102,7 @@ export function LoginScreen({ onLogin }) {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || staffLoading}
               className="w-full py-3.5 bg-gold text-navy font-bold rounded-2xl hover:bg-gold/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 cursor-pointer text-sm"
             >
               {loading ? (

@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Plus, Edit2, Trash2, Search, X, CreditCard, Check } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { STORAGE_KEYS } from '../../constants';
-import { storage, generateId, formatDate, logActivity } from '../../utils';
+import { generateId, formatDate, logActivity } from '../../utils';
 import { Modal, Input, Badge, ConfirmDialog } from '../../components/ui';
 
 function addDays(dateStr, days) {

@@ -3,7 +3,7 @@ import { LogOut, Users, TrendingUp, Clock } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { useLiveTimer } from '../../hooks/useLiveTimer';
 import { STORAGE_KEYS, DEFAULT_PRICING } from '../../constants';
-import { storage, formatTime, calcElapsedMinutes, calcBestPrice } from '../../utils';
+import { formatTime, calcElapsedMinutes, calcBestPrice } from '../../utils';
 import CheckoutModal from './CheckoutModal';
 
 function getInitials(name = '') {
@@ -19,11 +19,12 @@ function rowColor(m) {
 export default function CashierCurrent({ user, config, toast }) {
   const [sessions, , refresh] = useStorage(STORAGE_KEYS.SESSIONS, []);
   const [invoices] = useStorage(STORAGE_KEYS.INVOICES, []);
+  const [allSubs] = useStorage(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS, []);
+  const [pricing] = useStorage(STORAGE_KEYS.PRICING, DEFAULT_PRICING);
   const [checkoutSes, setCheckoutSes] = useState(null);
   useLiveTimer(30000);
 
   const active = sessions.filter(s => s.status === 'active').sort((a, b) => new Date(a.checkInTime) - new Date(b.checkInTime));
-  const allSubs = storage.get(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS) || [];
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayRevenue = invoices.filter(i => i.createdAt?.startsWith(todayStr)).reduce((s, i) => s + (i.total || 0), 0);
   const capacity = config.capacity || 50;
@@ -85,7 +86,6 @@ export default function CashierCurrent({ user, config, toast }) {
             </thead>
             <tbody>
               {active.map(s => {
-                const pricing = storage.get(STORAGE_KEYS.PRICING) || DEFAULT_PRICING;
                 const mins = calcElapsedMinutes(s.checkInTime);
                 const { best } = calcBestPrice(mins, pricing);
                 const hrs = Math.floor(mins / 60);

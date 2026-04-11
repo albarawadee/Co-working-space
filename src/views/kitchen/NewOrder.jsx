@@ -52,8 +52,10 @@ export function KitchenNewOrder({ user, toast }) {
     setSubmitting(true);
 
     const student = students.find(s => s.id === selectedStudentId);
+    const activeSession = activeSessions.find(s => s.studentId === selectedStudentId);
     const newOrder = {
       id: generateId('ORD'),
+      sessionId: activeSession?.id || null,
       studentId: selectedStudentId,
       studentName: student?.name || '',
       items: cartItems.map(i => ({

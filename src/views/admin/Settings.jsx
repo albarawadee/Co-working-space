@@ -1,17 +1,18 @@
 import { useState } from 'react';
-import { Trash2, Save, Wifi, Clock, Building2, Users } from 'lucide-react';
+import { Save, Wifi, Building2, Users, Tag } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
-import { STORAGE_KEYS, DEFAULT_CONFIG } from '../../constants';
-import { storage, logActivity } from '../../utils';
-import { Input, ConfirmDialog } from '../../components/ui';
+import { STORAGE_KEYS, DEFAULT_CONFIG, DEFAULT_PRICING } from '../../constants';
+import { logActivity } from '../../utils';
+import { Input } from '../../components/ui';
 
 export default function AdminSettings({ user, config, setConfig, toast }) {
   const [, saveConfig] = useStorage(STORAGE_KEYS.CONFIG, DEFAULT_CONFIG);
+  const [pricing, savePricing] = useStorage(STORAGE_KEYS.PRICING, DEFAULT_PRICING);
   const [sessions] = useStorage(STORAGE_KEYS.SESSIONS, []);
   const [libForm, setLibForm] = useState({ name: config.name || '', currency: config.currency || 'ج.م' });
   const [capForm, setCapForm] = useState({ capacity: config.capacity || 50, openTime: config.openTime || '08:00', closeTime: config.closeTime || '24:00' });
   const [wifiForm, setWifiForm] = useState({ wifiName: config.wifiName || '' });
-  const [confirmClear, setConfirmClear] = useState(false);
+  const [pricingForm, setPricingForm] = useState({ hourly: pricing.hourly ?? 15, dayStartHour: config.dayStartHour ?? 8 });
 
   const activeSessions = sessions.filter(s => s.status === 'active');
 
@@ -23,8 +24,13 @@ export default function AdminSettings({ user, config, setConfig, toast }) {
     toast('تم حفظ الإعدادات', 'success');
   };
 
-  const keys = storage.keys();
-  const sizeKB = Math.round(keys.reduce((s, k) => { try { return s + (localStorage.getItem(k) || '').length; } catch { return s; } }, 0) / 1024 * 10) / 10;
+  const savePricingSection = () => {
+    const hourly = Number(pricingForm.hourly);
+    const dayStartHour = Number(pricingForm.dayStartHour);
+    if (!hourly || hourly <= 0) { toast('أدخل سعراً صحيحاً للساعة', 'error'); return; }
+    savePricing({ ...pricing, hourly });
+    saveSection({ dayStartHour });
+  };
 
   return (
     <div className="space-y-5 fade-in">
@@ -93,13 +99,43 @@ export default function AdminSettings({ user, config, setConfig, toast }) {
         </button>
       </div>
 
+      {/* Quick Pricing */}
+      <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
+        <div className="flex items-center gap-2 mb-4">
+          <Tag size={18} className="text-amber-500"/>
+          <h2 className="font-semibold text-navy">التسعيرة السريعة</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Input
+            label="سعر الساعة"
+            type="number"
+            min="1"
+            value={pricingForm.hourly}
+            onChange={e => setPricingForm({ ...pricingForm, hourly: e.target.value })}
+          />
+          <Input
+            label="ساعة بداية اليوم"
+            type="number"
+            min="0"
+            max="23"
+            value={pricingForm.dayStartHour}
+            onChange={e => setPricingForm({ ...pricingForm, dayStartHour: e.target.value })}
+          />
+        </div>
+        <button
+          onClick={savePricingSection}
+          className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
+        >
+          <Save size={14}/>حفظ
+        </button>
+      </div>
+
       {/* System Info */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
         <h2 className="font-semibold text-navy mb-4">معلومات النظام</h2>
         {[
-          { l: 'مفاتيح التخزين', v: keys.length },
-          { l: 'حجم البيانات', v: `${sizeKB} KB` },
-          { l: 'الإصدار', v: '1.0.0' },
+          { l: 'قاعدة البيانات', v: 'Supabase (PostgreSQL)' },
+          { l: 'الإصدار', v: '2.0.0' },
           { l: 'شبكة WiFi', v: config.wifiName },
         ].map((r, i) => (
           <div key={i} className="flex justify-between py-2 border-b border-gray-100 last:border-0 text-sm">
@@ -108,27 +144,6 @@ export default function AdminSettings({ user, config, setConfig, toast }) {
           </div>
         ))}
       </div>
-
-      {/* Danger Zone */}
-      <div className="bg-red-50 border border-red-200 rounded-2xl p-5">
-        <h2 className="font-semibold text-red-700 mb-2">منطقة الخطر</h2>
-        <p className="text-sm text-red-600 mb-4">سيؤدي مسح البيانات إلى حذف جميع السجلات نهائياً.</p>
-        <button
-          onClick={() => setConfirmClear(true)}
-          className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
-        >
-          <Trash2 size={14}/><span>مسح جميع البيانات</span>
-        </button>
-      </div>
-
-      <ConfirmDialog
-        open={confirmClear}
-        onClose={() => setConfirmClear(false)}
-        onConfirm={() => { storage.clear(); window.location.reload(); }}
-        title="مسح جميع البيانات"
-        message="سيتم حذف جميع البيانات نهائياً. هل أنت متأكد؟"
-        variant="danger"
-      />
     </div>
   );
 }

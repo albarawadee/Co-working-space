@@ -1,14 +1,16 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Download, Wallet, CreditCard } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { STORAGE_KEYS } from '../../constants';
-import { storage, generateId, generateStudentId, formatDate, logActivity, exportCSV, getActiveSubscription } from '../../utils';
+import { generateId, generateStudentId, formatDate, logActivity, exportCSV, getActiveSubscription } from '../../utils';
 import { Modal, Input, Textarea, Badge, SearchInput, ConfirmDialog } from '../../components/ui';
 
 export default function AdminStudents({ user, config, toast }) {
   const [students, saveStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
   const [sessions]  = useStorage(STORAGE_KEYS.SESSIONS, []);
   const [invoices]  = useStorage(STORAGE_KEYS.INVOICES, []);
+  const [walletTxs, saveWalletTxs] = useStorage(STORAGE_KEYS.WALLET_TRANSACTIONS, []);
+  const [selectedActiveSub, setSelectedActiveSub] = useState(null);
   const [search, setSearch]         = useState('');
   const [showForm, setShowForm]     = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -28,6 +30,11 @@ export default function AdminStudents({ user, config, toast }) {
     return students.filter(s => s.name.toLowerCase().includes(q) || (s.studentId||'').toLowerCase().includes(q) || (s.phone||'').includes(q) || (s.memberNumber||'').includes(q));
   }, [students, search]);
 
+  useEffect(() => {
+    if (!selected) { setSelectedActiveSub(null); return; }
+    getActiveSubscription(selected.id).then(sub => setSelectedActiveSub(sub));
+  }, [selected?.id]);
+
   const openAdd = () => { setEditing(null); setForm({name:'',phone:'',memberNumber:'',email:'',tags:'',notes:''}); setErrors({}); setShowForm(true); };
   const openEdit = (s) => { setEditing(s); setForm({name:s.name,phone:s.phone||'',memberNumber:s.memberNumber||'',email:s.email||'',tags:(s.tags||[]).join(', '),notes:s.notes||''}); setErrors({}); setShowForm(true); };
 
@@ -37,7 +44,7 @@ export default function AdminStudents({ user, config, toast }) {
     setErrors(e); return !Object.keys(e).length;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validate()) return;
     const tags = form.tags.split(',').map(t=>t.trim()).filter(Boolean);
     if (editing) {
@@ -45,7 +52,8 @@ export default function AdminStudents({ user, config, toast }) {
       logActivity('تعديل طالب', form.name, user.id);
       toast('تم تعديل بيانات الطالب', 'success');
     } else {
-      const ns = { id:generateId('stu'), studentId:generateStudentId(), name:form.name.trim(), phone:form.phone.trim(), memberNumber:form.memberNumber.trim(), email:form.email.trim(), tags, notes:form.notes.trim(), walletBalance: 0, createdAt:new Date().toISOString() };
+      const studentId = await generateStudentId();
+      const ns = { id:generateId('stu'), studentId, name:form.name.trim(), phone:form.phone.trim(), memberNumber:form.memberNumber.trim(), email:form.email.trim(), tags, notes:form.notes.trim(), walletBalance: 0, createdAt:new Date().toISOString() };
       saveStudents([...students, ns]);
       logActivity('إضافة طالب', `${ns.name} — ${ns.studentId}`, user.id);
       toast('تمت إضافة الطالب', 'success');
@@ -105,8 +113,7 @@ export default function AdminStudents({ user, config, toast }) {
       staffId: user.id,
       createdAt: now,
     };
-    const existingTxs = storage.get(STORAGE_KEYS.WALLET_TRANSACTIONS) || [];
-    storage.set(STORAGE_KEYS.WALLET_TRANSACTIONS, [tx, ...existingTxs]);
+    saveWalletTxs([tx, ...walletTxs]);
 
     logActivity('شحن محفظة', `${selected.name} — +${amount} ${config.currency}`, user.id);
     toast(`تم شحن المحفظة بـ ${amount} ${config.currency}`, 'success');
@@ -154,7 +161,7 @@ export default function AdminStudents({ user, config, toast }) {
             <thead><tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500">
               <th className="px-4 py-3 text-right font-semibold">الكود</th>
               <th className="px-4 py-3 text-right font-semibold">الاسم</th>
-              <th className="px-4 py-3 text-right font-semibold">رقم العضوية</th>
+              <th className="px-4 py-3 text-right font-semibold">رقم النظام</th>
               <th className="px-4 py-3 text-right font-semibold">الهاتف</th>
               <th className="px-4 py-3 text-right font-semibold">تاريخ التسجيل</th>
               <th className="px-4 py-3 text-right font-semibold">الوسوم</th>
@@ -165,9 +172,9 @@ export default function AdminStudents({ user, config, toast }) {
                 <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">لا توجد نتائج</td></tr>
               ) : filtered.map(s => (
                 <tr key={s.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
-                  <td className="px-4 py-3"><code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">{s.studentId}</code></td>
+                  <td className="px-4 py-3"><code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">{s.memberNumber || s.studentId}</code></td>
                   <td className="px-4 py-3"><button onClick={()=>{setSelected(s);setShowProfile(true);}} className="font-medium text-navy hover:text-indigo-600 transition-colors cursor-pointer">{s.name}</button></td>
-                  <td className="px-4 py-3 text-gray-500">{s.memberNumber || '—'}</td>
+                  <td className="px-4 py-3 text-gray-400 text-xs font-mono">{s.studentId}</td>
                   <td className="px-4 py-3 text-gray-500">{s.phone||'—'}</td>
                   <td className="px-4 py-3 text-gray-400">{formatDate(s.createdAt)}</td>
                   <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{(s.tags||[]).slice(0,3).map((t,i)=><Badge key={i} variant="navy">{t}</Badge>)}</div></td>
@@ -200,11 +207,9 @@ export default function AdminStudents({ user, config, toast }) {
       {selected && (() => {
         const stats = getStats(selected);
         const inv   = invoices.filter(i=>i.studentId===selected.id).slice(0,8);
-        const activeSub = getActiveSubscription(selected.id);
+        const activeSub = selectedActiveSub;
         const walletBalance = selected.walletBalance || 0;
-        const walletTxs = (storage.get(STORAGE_KEYS.WALLET_TRANSACTIONS) || [])
-          .filter(tx => tx.studentId === selected.id)
-          .slice(0, 5);
+        const studentWalletTxs = walletTxs.filter(tx => tx.studentId === selected.id).slice(0, 5);
         return (
           <Modal open={showProfile} onClose={()=>setShowProfile(false)} title="ملف الطالب" size="lg">
             <div className="space-y-5">
@@ -254,10 +259,10 @@ export default function AdminStudents({ user, config, toast }) {
                   {walletBalance.toLocaleString('en-US')}
                   <span className="text-sm font-normal text-teal-600 mr-1">{config.currency}</span>
                 </p>
-                {walletTxs.length > 0 && (
+                {studentWalletTxs.length > 0 && (
                   <div className="mt-3 space-y-1.5">
                     <p className="text-xs font-medium text-teal-700 mb-1">آخر المعاملات</p>
-                    {walletTxs.map(tx => (
+                    {studentWalletTxs.map(tx => (
                       <div key={tx.id} className="flex items-center justify-between bg-white/60 rounded-lg px-3 py-1.5 text-xs">
                         <div className="flex items-center gap-1.5">
                           <span className={`w-1.5 h-1.5 rounded-full ${tx.type === 'topup' ? 'bg-teal-500' : 'bg-red-400'}`}/>

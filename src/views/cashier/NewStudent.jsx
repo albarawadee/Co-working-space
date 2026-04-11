@@ -32,12 +32,13 @@ export default function CashierNewStudent({ user, config, toast, setActiveView }
     return !Object.keys(e).length;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!validate()) return;
     const tags = form.tags.split(',').map(t => t.trim()).filter(Boolean);
+    const studentId = await generateStudentId();
     const ns = {
       id: generateId('stu'),
-      studentId: generateStudentId(),
+      studentId,
       name: form.name.trim(),
       phone: form.phone.trim(),
       memberNumber: form.userNumber.trim(),

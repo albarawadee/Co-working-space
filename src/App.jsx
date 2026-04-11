@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useToast } from './hooks/useToast';
 import { useStorage } from './hooks/useStorage';
 import { STORAGE_KEYS, DEFAULT_VIEWS } from './constants';
@@ -20,14 +20,18 @@ import AdminDailyRevenue from './views/admin/DailyRevenue';
 import AdminDeposits from './views/admin/Deposits';
 import AdminSubscriptions from './views/admin/Subscriptions';
 import AdminInternetGate from './views/admin/InternetGate';
+import AdminWalletSubs from './views/admin/WalletSubs';
+import AdminCharges from './views/admin/AdminCharges';
 
 // Cashier Views
+import CashierHub from './views/cashier/Hub';
 import CashierCurrent from './views/cashier/Current';
 import CashierCheckIn from './views/cashier/CheckIn';
 import CashierStudents from './views/cashier/Students';
 import CashierNewStudent from './views/cashier/NewStudent';
 import CashierLog from './views/cashier/Log';
 import CashierInternetGate from './views/cashier/InternetGate';
+import CashierWalletSubs from './views/cashier/WalletSubs';
 
 // Kitchen Views
 import { KitchenNewOrder } from './views/kitchen/NewOrder';
@@ -36,6 +40,8 @@ import { KitchenLog } from './views/kitchen/Log';
 import { KitchenProducts } from './views/kitchen/Products';
 
 const VIEW_MAP = {
+  // Cashier Hub (combined)
+  cashier_hub: CashierHub,
   // Admin
   admin_dashboard:  AdminDashboard,
   admin_students:   AdminStudents,
@@ -50,12 +56,15 @@ const VIEW_MAP = {
   admin_deposits:       AdminDeposits,
   admin_subscriptions:  AdminSubscriptions,
   admin_internet_gate:  AdminInternetGate,
+  admin_wallet_subs:    AdminWalletSubs,
+  admin_charges:        AdminCharges,
   // Cashier
   cashier_current:     CashierCurrent,
   cashier_checkin:     CashierCheckIn,
   cashier_students:    CashierStudents,
   cashier_new_student:  CashierNewStudent,
   cashier_internet_gate: CashierInternetGate,
+  cashier_wallet_subs:   CashierWalletSubs,
   cashier_log:           CashierLog,
   // Kitchen
   kitchen_new_order:     KitchenNewOrder,
@@ -67,15 +76,33 @@ const VIEW_MAP = {
 export default function App() {
   const { toasts, toast } = useToast();
   const [config] = useStorage(STORAGE_KEYS.CONFIG, {});
+  const [staff] = useStorage(STORAGE_KEYS.STAFF, []);
   const [user, setUser] = useState(null);
   const [activeView, setActiveView] = useState('');
 
+  // Rehydrate session on refresh
+  useEffect(() => {
+    if (staff.length === 0) return;          // still loading
+    if (user) return;                        // already logged in
+    const savedId = sessionStorage.getItem('sv_user_id');
+    if (!savedId) return;
+    const member = staff.find(s => s.id === savedId && s.active !== false);
+    if (member) {
+      setUser(member);
+      setActiveView(prev => prev || DEFAULT_VIEWS[member.role] || '');
+    } else {
+      sessionStorage.removeItem('sv_user_id'); // account disabled/deleted
+    }
+  }, [staff]);
+
   function handleLogin(member) {
+    sessionStorage.setItem('sv_user_id', member.id);
     setUser(member);
     setActiveView(DEFAULT_VIEWS[member.role] || '');
   }
 
   function handleLogout() {
+    sessionStorage.removeItem('sv_user_id');
     setUser(null);
     setActiveView('');
   }

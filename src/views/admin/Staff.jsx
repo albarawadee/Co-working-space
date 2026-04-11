@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Edit2, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Plus, Edit2, Trash2, Eye, EyeOff, KeyRound } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { STORAGE_KEYS } from '../../constants';
 import { generateId, formatDateTime, logActivity } from '../../utils';
@@ -17,6 +17,10 @@ export default function AdminStaff({ user, config, toast }) {
   const [showPwd, setShowPwd]       = useState(false);
   const [form, setForm]   = useState({ name:'', username:'', password:'', role:'cashier', active:true });
   const [errors, setErrors] = useState({});
+  const [pwdTarget, setPwdTarget]   = useState(null);   // staff member being password-changed
+  const [pwdForm, setPwdForm]       = useState({ newPwd:'', confirmPwd:'' });
+  const [pwdErrors, setPwdErrors]   = useState({});
+  const [showNewPwd, setShowNewPwd] = useState(false);
 
   const openAdd  = () => { setEditing(null); setForm({name:'',username:'',password:'',role:'cashier',active:true}); setErrors({}); setShowPwd(false); setShowForm(true); };
   const openEdit = (s) => { setEditing(s); setForm({name:s.name,username:s.username,password:s.password,role:s.role,active:s.active}); setErrors({}); setShowPwd(false); setShowForm(true); };
@@ -42,6 +46,21 @@ export default function AdminStaff({ user, config, toast }) {
       toast('تمت إضافة الموظف', 'success');
     }
     setShowForm(false);
+  };
+
+  const openChangePwd = (s) => { setPwdTarget(s); setPwdForm({newPwd:'',confirmPwd:''}); setPwdErrors({}); setShowNewPwd(false); };
+
+  const handleChangePwd = () => {
+    const e = {};
+    if (!pwdForm.newPwd.trim())                          e.newPwd = 'كلمة المرور الجديدة مطلوبة';
+    else if (pwdForm.newPwd.length < 4)                  e.newPwd = 'لا تقل عن 4 أحرف';
+    if (pwdForm.newPwd !== pwdForm.confirmPwd)           e.confirmPwd = 'كلمتا المرور غير متطابقتين';
+    setPwdErrors(e);
+    if (Object.keys(e).length) return;
+    saveStaff(staff.map(s => s.id===pwdTarget.id ? {...s, password:pwdForm.newPwd.trim()} : s));
+    logActivity('تغيير كلمة مرور', pwdTarget.name, user.id);
+    toast('تم تغيير كلمة المرور', 'success');
+    setPwdTarget(null);
   };
 
   const handleDelete = (s) => { saveStaff(staff.filter(st=>st.id!==s.id)); toast('تم حذف الموظف','info'); };
@@ -84,6 +103,7 @@ export default function AdminStaff({ user, config, toast }) {
                 <td className="px-4 py-3 text-xs text-navy-400">{lastActivity(s.id)}</td>
                 <td className="px-4 py-3"><div className="flex items-center gap-1">
                   <button onClick={()=>openEdit(s)} className="p-1.5 rounded-lg hover:bg-cream-100 text-navy-400 hover:text-gold transition-colors duration-200 cursor-pointer"><Edit2 size={13}/></button>
+                  {(s.role!=='admin' || s.id===user.id) && <button onClick={()=>openChangePwd(s)} title="تغيير كلمة المرور" className="p-1.5 rounded-lg hover:bg-indigo-50 text-navy-400 hover:text-indigo-600 transition-colors duration-200 cursor-pointer"><KeyRound size={13}/></button>}
                   {s.id!==user.id && s.role!=='admin' && <button onClick={()=>setConfirmDelete(s)} className="p-1.5 rounded-lg hover:bg-red-50 text-navy-400 hover:text-red-500 transition-colors duration-200 cursor-pointer"><Trash2 size={13}/></button>}
                 </div></td>
               </tr>
@@ -110,6 +130,42 @@ export default function AdminStaff({ user, config, toast }) {
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmDelete} onClose={()=>setConfirmDelete(null)} onConfirm={()=>handleDelete(confirmDelete)} title="حذف الموظف" message={`هل أنت متأكد من حذف "${confirmDelete?.name}"؟`} />
+
+      <Modal
+        open={!!pwdTarget}
+        onClose={()=>setPwdTarget(null)}
+        title={`تغيير كلمة مرور — ${pwdTarget?.name}`}
+        footer={
+          <div className="flex gap-3 justify-end">
+            <button onClick={()=>setPwdTarget(null)} className="px-4 py-2 rounded-xl border border-cream-300 text-navy text-sm cursor-pointer hover:bg-cream-100 transition-colors duration-200">إلغاء</button>
+            <button onClick={handleChangePwd} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm cursor-pointer hover:bg-indigo-700 transition-colors duration-200">تغيير</button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="relative">
+            <Input
+              label="كلمة المرور الجديدة *"
+              type={showNewPwd ? 'text' : 'password'}
+              value={pwdForm.newPwd}
+              onChange={e=>setPwdForm({...pwdForm, newPwd:e.target.value})}
+              error={pwdErrors.newPwd}
+              placeholder="••••••••"
+            />
+            <button type="button" onClick={()=>setShowNewPwd(!showNewPwd)} className="absolute left-3 top-8 text-navy-400 hover:text-navy cursor-pointer transition-colors">
+              {showNewPwd ? <EyeOff size={15}/> : <Eye size={15}/>}
+            </button>
+          </div>
+          <Input
+            label="تأكيد كلمة المرور *"
+            type="password"
+            value={pwdForm.confirmPwd}
+            onChange={e=>setPwdForm({...pwdForm, confirmPwd:e.target.value})}
+            error={pwdErrors.confirmPwd}
+            placeholder="••••••••"
+          />
+        </div>
+      </Modal>
     </div>
   );
 }

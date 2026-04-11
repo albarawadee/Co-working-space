@@ -17,6 +17,7 @@ export const STORAGE_KEYS = {
   STUDENT_SUBSCRIPTIONS: 'lib-student-subscriptions',
   GATEWAY_CONFIG:        'lib-gateway-config',
   GATEWAY_LOGS:          'lib-gateway-logs',
+  ADMIN_CHARGES:         'lib-admin-charges',
 };
 
 export const DEFAULT_GATEWAY_CONFIG = {
@@ -29,12 +30,13 @@ export const DEFAULT_GATEWAY_CONFIG = {
 };
 
 export const DEFAULT_CONFIG = {
-  name:      'Smart Vision',
-  capacity:  50,
-  wifiName:  'Smart-Vision-WiFi',
-  currency:  'ج.م',
-  openTime:  '08:00',
-  closeTime: '24:00',
+  name:         'Smart Vision',
+  capacity:     50,
+  wifiName:     'Smart-Vision-WiFi',
+  currency:     'ج.م',
+  openTime:     '08:00',
+  closeTime:    '24:00',
+  dayStartHour: 8,
 };
 
 export const DEFAULT_PRICING = {
@@ -90,16 +92,20 @@ export const MENU = {
     { view: 'admin_reports',   label: 'التقارير',         icon: BarChart2    },
     { view: 'admin_daily',     label: 'الإيرادات اليومية', icon: CalendarDays },
     { view: 'admin_deposits',      label: 'إضافة رصيد',      icon: ArrowUpCircle },
+    { view: 'admin_wallet_subs',   label: 'الرصيد والاشتراكات', icon: Wallet     },
+    { view: 'admin_charges',       label: 'مستحقات الموظفين',   icon: Receipt    },
     { view: 'admin_internet_gate', label: 'بوابة الإنترنت',   icon: Globe         },
     { view: 'admin_settings',      label: 'الإعدادات',       icon: Settings      },
   ],
   cashier: [
-    { view: 'cashier_current',     label: 'الجلسات النشطة', icon: Users    },
-    { view: 'cashier_checkin',     label: 'تسجيل الدخول',  icon: Check    },
-    { view: 'cashier_students',     label: 'الطلاب',          icon: Users2   },
-    { view: 'cashier_new_student',  label: 'طالب جديد',      icon: UserPlus },
-    { view: 'cashier_internet_gate', label: 'بوابة الإنترنت', icon: Globe    },
-    { view: 'cashier_log',          label: 'سجل اليوم',      icon: FileText },
+    { view: 'cashier_hub',           label: 'الجلسات والدخول',  icon: Users    },
+    { view: 'cashier_students',      label: 'الطلاب',            icon: Users2   },
+    { view: 'cashier_wallet_subs',   label: 'الرصيد والاشتراكات', icon: Wallet  },
+    { view: 'cashier_internet_gate', label: 'بوابة الإنترنت',   icon: Globe    },
+    { view: 'cashier_log',           label: 'سجل اليوم',        icon: FileText },
+    { view: 'kitchen_new_order',     label: 'طلب جديد',         icon: ShoppingCart },
+    { view: 'kitchen_active_orders', label: 'الطلبات النشطة',   icon: Activity     },
+    { view: 'kitchen_products',      label: 'القائمة',           icon: Coffee       },
   ],
   kitchen: [
     { view: 'kitchen_new_order',     label: 'طلب جديد',       icon: ShoppingCart },
@@ -111,6 +117,6 @@ export const MENU = {
 
 export const DEFAULT_VIEWS = {
   admin:   'admin_dashboard',
-  cashier: 'cashier_current',
+  cashier: 'cashier_hub',
   kitchen: 'kitchen_active_orders',
 };
