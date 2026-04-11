@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Check, Wallet, CreditCard, Loader, ChevronDown, ChevronUp, Plus, Minus, X, UserCheck } from 'lucide-react';
+import { Check, Wallet, CreditCard, Loader, ChevronDown, ChevronUp, Plus, Minus, X, UserCheck, Zap } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { useLiveTimer } from '../../hooks/useLiveTimer';
 import { STORAGE_KEYS, DEFAULT_PRICING } from '../../constants';
 import { supabase, generateId, formatTime, calcElapsedMinutes, calcBestPrice, logActivity, getActiveSubscription, resolveSubscriptionBilling } from '../../utils';
 import { toSnake } from '../../lib/fieldMaps';
-import { Modal, Badge } from '../../components/ui';
+import { Modal } from '../../components/ui';
 
 export default function CheckoutModal({ open, onClose, session, config, user, toast, onCheckedOut }) {
   const [pricing]  = useStorage(STORAGE_KEYS.PRICING, DEFAULT_PRICING);
@@ -14,41 +14,45 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
   const [owners]   = useStorage(STORAGE_KEYS.OWNERS, []);
   const [products] = useStorage(STORAGE_KEYS.PRODUCTS, []);
   const [staff]    = useStorage(STORAGE_KEYS.STAFF, []);
-  const [selectedType, setSelectedType] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [selectedOwnerId, setSelectedOwnerId] = useState('');
   const [selectedAdminId, setSelectedAdminId] = useState('');
   const [activeSub, setActiveSub] = useState(null);
+  const [useSubscription, setUseSubscription] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showOrderDetail, setShowOrderDetail] = useState(false);
   const [addedItems, setAddedItems] = useState([]);
   const [addProductId, setAddProductId] = useState('');
   const [addQty, setAddQty] = useState(1);
+  const [amountReceived, setAmountReceived] = useState('');
+  const [addChangeToWallet, setAddChangeToWallet] = useState(false);
   useLiveTimer(30000);
 
   // Fetch active subscription when modal opens
   useEffect(() => {
     if (!open || !session) return;
     setActiveSub(null);
+    setUseSubscription(true);
     setAddedItems([]);
     setAddProductId('');
     setAddQty(1);
     setSelectedAdminId('');
+    setAmountReceived('');
+    setAddChangeToWallet(false);
     getActiveSubscription(session.studentId).then(sub => setActiveSub(sub));
   }, [open, session?.studentId]);
 
   if (!open || !session) return null;
 
   const minutes = calcElapsedMinutes(session.checkInTime);
-  const { options, best } = calcBestPrice(minutes, pricing);
+  const { best } = calcBestPrice(minutes, pricing);
   const sessionOrders = orders.filter(o => o.sessionId === session.id && o.status !== 'cancelled');
   const kitchenTotal  = sessionOrders.reduce((s, o) => s + (o.total || 0), 0);
-  const chosen        = selectedType || best.type;
-  const chosenOption  = options.find(o => o.type === chosen) || best;
   const hrs = Math.floor(minutes / 60), mins = minutes % 60;
 
   const hasActiveSub  = !!activeSub;
-  const sessionCost   = hasActiveSub ? 0 : chosenOption.amount;
+  const useSubBilling = hasActiveSub && useSubscription;
+  const sessionCost   = useSubBilling ? 0 : best.amount;
 
   const addedTotal      = addedItems.reduce((s, i) => s + i.subtotal, 0);
   const grandTotal      = sessionCost + kitchenTotal + addedTotal;
@@ -62,6 +66,10 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
   const availableProducts = products.filter(p => p.available !== false);
   const needsPayment    = grandTotal > 0;
   const todayStr        = new Date().toISOString().slice(0, 10);
+
+  const showAmountReceived = needsPayment && ['cash', 'transfer', 'instapay'].includes(paymentMethod);
+  const receivedNum = parseFloat(amountReceived) || 0;
+  const change = showAmountReceived ? Math.max(0, receivedNum - grandTotal) : 0;
 
   const handleAddItem = () => {
     if (!addProductId) return;
@@ -100,6 +108,9 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
       if (paymentMethod === 'admin') {
         if (!selectedAdmin) { toast('اختر الموظف المسؤول', 'error'); return; }
       }
+      if (showAmountReceived && receivedNum > 0 && receivedNum < grandTotal) {
+        toast('المبلغ المدفوع أقل من الإجمالي', 'error'); return;
+      }
     }
 
     setIsProcessing(true);
@@ -109,8 +120,8 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
     try {
       const writes = [];
 
-      // 1. Subscription billing
-      if (hasActiveSub) {
+      // 1. Subscription billing (only when cashier chose to use it)
+      if (useSubBilling) {
         const { updatedSub } = resolveSubscriptionBilling(activeSub, minutes, todayStr);
         writes.push(
           supabase.from('student_subscriptions').upsert(toSnake({
@@ -146,6 +157,31 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
             balanceBefore: walletBalance,
             balanceAfter: walletBalance - grandTotal,
             note: 'خصم جلسة',
+            invoiceId,
+            staffId: user.id,
+            createdAt: now,
+          }))
+        );
+      }
+
+      // 3b. Change → wallet topup
+      if (addChangeToWallet && change > 0) {
+        const newBalance = walletBalance + change;
+        writes.push(
+          supabase.from('students').update({
+            wallet_balance: newBalance,
+          }).eq('id', session.studentId)
+        );
+        writes.push(
+          supabase.from('wallet_transactions').insert(toSnake({
+            id: generateId('wtx'),
+            studentId: session.studentId,
+            studentName: session.studentName,
+            type: 'topup',
+            amount: change,
+            balanceBefore: walletBalance,
+            balanceAfter: newBalance,
+            note: 'باقي جلسة',
             invoiceId,
             staffId: user.id,
             createdAt: now,
@@ -205,13 +241,13 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
           studentId: session.studentId,
           studentName: session.studentName,
           minutes,
-          priceType: hasActiveSub ? 'subscription' : chosen,
-          pricingLabel: hasActiveSub ? `اشتراك: ${activeSub.planName}` : chosenOption.label,
+          priceType: useSubBilling ? 'subscription' : best.type,
+          pricingLabel: useSubBilling ? `اشتراك: ${activeSub.planName}` : best.label,
           amount: sessionCost,
           kitchenTotal,
           total: grandTotal,
-          billingType: hasActiveSub ? 'subscription' : 'normal',
-          subscriptionId: hasActiveSub ? activeSub.id : null,
+          billingType: useSubBilling ? 'subscription' : 'normal',
+          subscriptionId: useSubBilling ? activeSub.id : null,
           paymentMethod: effectivePaymentMethod,
           ownerId: effectivePaymentMethod === 'owner' ? selectedOwnerId : null,
           ...(effectivePaymentMethod === 'admin' ? { adminId: selectedAdminId } : {}),
@@ -225,6 +261,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
         supabase.from('sessions').update({
           status: 'closed',
           check_out_time: now,
+          checked_out_by: user.id,
         }).eq('id', session.id)
       );
 
@@ -264,38 +301,38 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
           </div>
         </div>
 
-        {/* Active subscription info card */}
+        {/* Subscription toggle */}
         {hasActiveSub && (
-          <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-teal-800">اشتراك نشط — {activeSub.planName}</p>
-                <p className="text-xs text-teal-600 mt-0.5">
-                  متبقٍ: {activeSub.remainingQuota} {activeSub.quotaType === 'hours' ? 'ساعة' : 'يوم'} · ينتهي: {activeSub.expiryDate}
-                </p>
-              </div>
-              <span className="text-xs bg-teal-100 text-teal-700 px-2 py-1 rounded-full font-medium">مجاني</span>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-navy">اشتراك نشط — {activeSub.planName}</p>
+            <p className="text-xs text-gray-500">
+              متبقٍ: {activeSub.remainingQuota} {activeSub.quotaType === 'hours' ? 'ساعة' : 'يوم'} · ينتهي: {activeSub.expiryDate}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setUseSubscription(true)}
+                className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-medium transition-all cursor-pointer flex items-center justify-center gap-1.5 ${useSubscription ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
+              >
+                <Zap size={14}/>استخدام الاشتراك
+              </button>
+              <button
+                onClick={() => setUseSubscription(false)}
+                className={`flex-1 py-2.5 rounded-xl border-2 text-sm font-medium transition-all cursor-pointer flex items-center justify-center gap-1.5 ${!useSubscription ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
+              >
+                <CreditCard size={14}/>محاسبة عادية
+              </button>
             </div>
           </div>
         )}
 
-        {/* Pricing options — only show when no active subscription */}
-        {!hasActiveSub && (
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-navy">اختر نوع التسعيرة:</p>
-            {options.map(opt => (
-              <button key={opt.type} onClick={() => setSelectedType(opt.type)}
-                className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-all duration-200 cursor-pointer text-right ${chosen === opt.type ? 'border-teal bg-teal-50' : 'border-gray-200 hover:border-gray-300 bg-white'}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${chosen === opt.type ? 'border-teal bg-teal' : 'border-gray-400'}`}>
-                    {chosen === opt.type && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
-                  </div>
-                  <span className="text-sm font-medium text-navy">{opt.label}</span>
-                  {opt.type === best.type && <Badge variant="green">الأوفر</Badge>}
-                </div>
-                <span className="font-bold text-navy">{opt.amount.toLocaleString('en-US')} {config.currency}</span>
-              </button>
-            ))}
+        {/* Auto-calculated pricing — show when not using subscription */}
+        {!useSubBilling && (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-navy">{best.label}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{best.billableHours || Math.ceil(minutes / 60)} ساعة محسوبة</p>
+            </div>
+            <span className="text-lg font-bold text-indigo-700">{best.amount.toLocaleString('en-US')} {config.currency}</span>
           </div>
         )}
 
@@ -497,6 +534,41 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
                     )}
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Amount received + change to wallet */}
+        {showAmountReceived && (
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-navy">المبلغ المدفوع:</p>
+            <input
+              type="number"
+              inputMode="decimal"
+              value={amountReceived}
+              onChange={e => { setAmountReceived(e.target.value); setAddChangeToWallet(false); }}
+              placeholder={`${grandTotal.toLocaleString('en-US')} ${config.currency} (المطلوب)`}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-300"
+              dir="ltr"
+            />
+            {change > 0 && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-emerald-800 font-medium">الباقي</span>
+                  <span className="font-bold text-emerald-700">{change.toLocaleString('en-US')} {config.currency}</span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={addChangeToWallet}
+                    onChange={e => setAddChangeToWallet(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span className="text-xs text-emerald-700">
+                    إضافة الباقي للمحفظة (الرصيد الحالي: {walletBalance.toLocaleString('en-US')} → {(walletBalance + change).toLocaleString('en-US')} {config.currency})
+                  </span>
+                </label>
               </div>
             )}
           </div>

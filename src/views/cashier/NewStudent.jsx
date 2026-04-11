@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { UserPlus, Hash } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
-import { STORAGE_KEYS, DEFAULT_CONFIG } from '../../constants';
+import { STORAGE_KEYS, DEFAULT_CONFIG, NATIONALITIES } from '../../constants';
 import { generateId, generateStudentId, logActivity } from '../../utils';
-import { Input, Select, Textarea } from '../../components/ui';
+import { Input, Select, Textarea, SearchableSelect } from '../../components/ui';
 
 export default function CashierNewStudent({ user, config, toast, setActiveView }) {
   const [students, saveStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
   const [sessions, saveSessions] = useStorage(STORAGE_KEYS.SESSIONS, []);
   const [form, setForm] = useState({
     name: '', phone: '', userNumber: '', email: '', tags: '', notes: '',
-    university: '', college: '', academicYear: '',
+    university: '', college: '', academicYear: '', nationality: '',
   });
   const [errors, setErrors] = useState({});
   const [checkinNow, setCheckinNow] = useState(true);
@@ -47,6 +47,7 @@ export default function CashierNewStudent({ user, config, toast, setActiveView }
       university: form.university,
       college: form.college,
       academicYear: form.academicYear,
+      nationality: form.nationality.trim(),
       tags,
       notes: form.notes.trim(),
       createdAt: new Date().toISOString(),
@@ -68,7 +69,7 @@ export default function CashierNewStudent({ user, config, toast, setActiveView }
       setActiveView?.('cashier_current');
     } else {
       toast(`تم تسجيل ${ns.name}`, 'success');
-      setForm({ name: '', phone: '', userNumber: '', email: '', tags: '', notes: '', university: '', college: '', academicYear: '' });
+      setForm({ name: '', phone: '', userNumber: '', email: '', tags: '', notes: '', university: '', college: '', academicYear: '', nationality: '' });
       setErrors({});
     }
   };
@@ -123,14 +124,23 @@ export default function CashierNewStudent({ user, config, toast, setActiveView }
             </div>
           </div>
 
-          {/* Email */}
-          <Input
-            label="البريد الإلكتروني"
-            value={form.email}
-            onChange={e => setForm({ ...form, email: e.target.value })}
-            type="email"
-            placeholder="example@email.com"
-          />
+          {/* Email + Nationality */}
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="البريد الإلكتروني"
+              value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })}
+              type="email"
+              placeholder="example@email.com"
+            />
+            <SearchableSelect
+              label="الجنسية"
+              value={form.nationality}
+              onChange={v => setForm({ ...form, nationality: v })}
+              options={NATIONALITIES}
+              placeholder="— اختر —"
+            />
+          </div>
 
           {/* University / College / Year */}
           <div className="grid grid-cols-3 gap-3">

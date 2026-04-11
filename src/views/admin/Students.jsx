@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Download, Wallet, CreditCard } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
-import { STORAGE_KEYS, DEFAULT_CONFIG } from '../../constants';
+import { STORAGE_KEYS, DEFAULT_CONFIG, NATIONALITIES } from '../../constants';
 import { generateId, generateStudentId, formatDate, logActivity, exportCSV, getActiveSubscription } from '../../utils';
-import { Modal, Input, Select, Textarea, Badge, SearchInput, ConfirmDialog } from '../../components/ui';
+import { Modal, Input, Select, Textarea, Badge, SearchInput, SearchableSelect, ConfirmDialog } from '../../components/ui';
 
 export default function AdminStudents({ user, config, toast }) {
   const [students, saveStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
@@ -17,7 +17,7 @@ export default function AdminStudents({ user, config, toast }) {
   const [editing, setEditing]       = useState(null);
   const [selected, setSelected]     = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
-  const [form, setForm]   = useState({ name:'', phone:'', memberNumber:'', email:'', tags:'', notes:'', university:'', college:'', academicYear:'' });
+  const [form, setForm]   = useState({ name:'', phone:'', memberNumber:'', email:'', tags:'', notes:'', university:'', college:'', academicYear:'', nationality:'' });
   const [errors, setErrors] = useState({});
 
   // Wallet top-up modal
@@ -35,8 +35,8 @@ export default function AdminStudents({ user, config, toast }) {
     getActiveSubscription(selected.id).then(sub => setSelectedActiveSub(sub));
   }, [selected?.id]);
 
-  const openAdd = () => { setEditing(null); setForm({name:'',phone:'',memberNumber:'',email:'',tags:'',notes:'',university:'',college:'',academicYear:''}); setErrors({}); setShowForm(true); };
-  const openEdit = (s) => { setEditing(s); setForm({name:s.name,phone:s.phone||'',memberNumber:s.memberNumber||'',email:s.email||'',tags:(s.tags||[]).join(', '),notes:s.notes||'',university:s.university||'',college:s.college||'',academicYear:s.academicYear||''}); setErrors({}); setShowForm(true); };
+  const openAdd = () => { setEditing(null); setForm({name:'',phone:'',memberNumber:'',email:'',tags:'',notes:'',university:'',college:'',academicYear:'',nationality:''}); setErrors({}); setShowForm(true); };
+  const openEdit = (s) => { setEditing(s); setForm({name:s.name,phone:s.phone||'',memberNumber:s.memberNumber||'',email:s.email||'',tags:(s.tags||[]).join(', '),notes:s.notes||'',university:s.university||'',college:s.college||'',academicYear:s.academicYear||'',nationality:s.nationality||''}); setErrors({}); setShowForm(true); };
 
   const validate = () => {
     const e = {};
@@ -48,12 +48,12 @@ export default function AdminStudents({ user, config, toast }) {
     if (!validate()) return;
     const tags = form.tags.split(',').map(t=>t.trim()).filter(Boolean);
     if (editing) {
-      saveStudents(students.map(s => s.id===editing.id ? {...s,...form,tags,memberNumber:form.memberNumber.trim(),university:form.university,college:form.college,academicYear:form.academicYear} : s));
+      saveStudents(students.map(s => s.id===editing.id ? {...s,...form,tags,memberNumber:form.memberNumber.trim(),university:form.university,college:form.college,academicYear:form.academicYear,nationality:form.nationality.trim()} : s));
       logActivity('تعديل طالب', form.name, user.id);
       toast('تم تعديل بيانات الطالب', 'success');
     } else {
       const studentId = await generateStudentId();
-      const ns = { id:generateId('stu'), studentId, name:form.name.trim(), phone:form.phone.trim(), memberNumber:form.memberNumber.trim(), email:form.email.trim(), university:form.university, college:form.college, academicYear:form.academicYear, tags, notes:form.notes.trim(), walletBalance: 0, createdAt:new Date().toISOString() };
+      const ns = { id:generateId('stu'), studentId, name:form.name.trim(), phone:form.phone.trim(), memberNumber:form.memberNumber.trim(), email:form.email.trim(), university:form.university, college:form.college, academicYear:form.academicYear, nationality:form.nationality.trim(), tags, notes:form.notes.trim(), walletBalance: 0, createdAt:new Date().toISOString() };
       saveStudents([...students, ns]);
       logActivity('إضافة طالب', `${ns.name} — ${ns.studentId}`, user.id);
       toast('تمت إضافة الطالب', 'success');
@@ -70,8 +70,8 @@ export default function AdminStudents({ user, config, toast }) {
 
   const handleExport = () => {
     exportCSV('students.csv',
-      ['الكود', 'الاسم', 'رقم العضوية', 'الهاتف', 'الجامعة', 'الكلية', 'السنة الدراسية', 'البريد الإلكتروني', 'الوسوم', 'تاريخ التسجيل'],
-      students.map(s => [s.studentId, s.name, s.memberNumber||'', s.phone||'', s.university||'', s.college||'', s.academicYear||'', s.email||'', (s.tags||[]).join(' | '), s.createdAt?.slice(0,10)||''])
+      ['الكود', 'الاسم', 'رقم العضوية', 'الهاتف', 'الجنسية', 'الجامعة', 'الكلية', 'السنة الدراسية', 'البريد الإلكتروني', 'الوسوم', 'تاريخ التسجيل'],
+      students.map(s => [s.studentId, s.name, s.memberNumber||'', s.phone||'', s.nationality||'', s.university||'', s.college||'', s.academicYear||'', s.email||'', (s.tags||[]).join(' | '), s.createdAt?.slice(0,10)||''])
     );
   };
 
@@ -203,7 +203,10 @@ export default function AdminStudents({ user, config, toast }) {
             <Input label="رقم الهاتف" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})} placeholder="01xxxxxxxxx" />
             <Input label="رقم العضوية" value={form.memberNumber} onChange={e=>setForm({...form,memberNumber:e.target.value})} placeholder="رقم العضوية (اختياري)" />
           </div>
-          <Input label="البريد الإلكتروني" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} type="email" placeholder="example@email.com" />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="البريد الإلكتروني" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} type="email" placeholder="example@email.com" />
+            <SearchableSelect label="الجنسية" value={form.nationality} onChange={v=>setForm({...form,nationality:v})} options={NATIONALITIES} placeholder="— اختر —" />
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <Select label="الجامعة" value={form.university} onChange={e=>setForm({...form,university:e.target.value})}>
               <option value="">— اختر —</option>
@@ -239,9 +242,9 @@ export default function AdminStudents({ user, config, toast }) {
                   <h3 className="text-lg font-bold text-navy">{selected.name}</h3>
                   <code className="text-xs text-gray-400">{selected.studentId}</code>
                   {selected.memberNumber && <span className="text-xs text-indigo-600 mr-2">· رقم العضوية: {selected.memberNumber}</span>}
-                  {(selected.university || selected.college || selected.academicYear) && (
+                  {(selected.nationality || selected.university || selected.college || selected.academicYear) && (
                     <p className="text-xs text-gray-500 mt-1">
-                      {[selected.university, selected.college, selected.academicYear ? `السنة ${selected.academicYear}` : ''].filter(Boolean).join(' · ')}
+                      {[selected.nationality, selected.university, selected.college, selected.academicYear ? `السنة ${selected.academicYear}` : ''].filter(Boolean).join(' · ')}
                     </p>
                   )}
                   <div className="flex flex-wrap gap-1 mt-2">
@@ -311,8 +314,8 @@ export default function AdminStudents({ user, config, toast }) {
                   {inv.map(i=>(
                     <div key={i.id} className="flex justify-between items-center bg-gray-50 rounded-xl px-3 py-2 text-xs">
                       <span className="text-gray-500">{formatDate(i.createdAt)}</span>
-                      <Badge variant={i.priceType==='fullDay'?'navy':i.priceType==='halfDay'?'teal':'gold'}>
-                        {i.priceType==='fullDay'?'يوم كامل':i.priceType==='halfDay'?'نصف يوم':i.priceType==='subscription'?'اشتراك':'ساعي'}
+                      <Badge variant={i.priceType==='fullDay'?'navy':i.priceType==='halfDay'?'teal':i.priceType==='subscription'?'teal':i.priceType?.startsWith('tier-')?'navy':'gold'}>
+                        {i.priceType==='fullDay'?'يوم كامل':i.priceType==='halfDay'?'نصف يوم':i.priceType==='subscription'?'اشتراك':i.priceType?.startsWith('tier-')?(i.pricingLabel || 'باقة'):'ساعي'}
                       </Badge>
                       <span className="font-semibold text-navy">{(i.total||0).toLocaleString('en-US')} {config.currency}</span>
                     </div>

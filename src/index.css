@@ -4,12 +4,21 @@
 
 @layer base {
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
   body {
     font-family: 'IBM Plex Sans Arabic', sans-serif;
     background-color: #f7f6f3;
     color: #1a1f3d;
     direction: rtl;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+  /* Prevent iOS Safari zoom on input focus (font-size must be ≥16px) */
+  input, select, textarea {
+    font-size: 16px;
+  }
+  @media (min-width: 640px) {
+    input, select, textarea { font-size: inherit; }
   }
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: #eeece6; }

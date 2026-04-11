@@ -5,13 +5,13 @@ import {
 } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { useLiveTimer } from '../../hooks/useLiveTimer';
-import { STORAGE_KEYS, DEFAULT_PRICING } from '../../constants';
+import { STORAGE_KEYS, DEFAULT_PRICING, NATIONALITIES } from '../../constants';
 import {
   formatTime, calcElapsedMinutes, calcBestPrice,
   generateId, generateStudentId, logActivity,
   getActiveSubscription,
 } from '../../utils';
-import { Input, Select, Textarea } from '../../components/ui';
+import { Input, Select, Textarea, SearchableSelect } from '../../components/ui';
 import CheckoutModal from './CheckoutModal';
 
 /* ─── helpers ─── */
@@ -60,6 +60,7 @@ function CheckInPanel({ user, config, toast, sessions, saveSessions }) {
       checkInTime:  new Date().toISOString(),
       type:   sessionType,
       status: 'active',
+      checkedInBy:  user.id,
     }]);
     logActivity('تسجيل دخول', selected.name, user.id);
     toast(`تم تسجيل دخول ${selected.name}`, 'success');
@@ -153,7 +154,7 @@ function CheckInPanel({ user, config, toast, sessions, saveSessions }) {
 /* ─── New Student panel ─── */
 function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
   const [students, saveStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
-  const [form, setForm]   = useState({ name:'', phone:'', userNumber:'', notes:'', university:'', college:'', academicYear:'' });
+  const [form, setForm]   = useState({ name:'', phone:'', userNumber:'', notes:'', university:'', college:'', academicYear:'', nationality:'' });
   const [errors, setErrors] = useState({});
   const [checkinNow, setCheckinNow] = useState(true);
 
@@ -188,6 +189,7 @@ function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
       university:   form.university,
       college:      form.college,
       academicYear: form.academicYear,
+      nationality:  form.nationality.trim(),
       notes:        form.notes.trim(),
       tags:         [],
       createdAt:    new Date().toISOString(),
@@ -203,13 +205,14 @@ function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
         checkInTime:  new Date().toISOString(),
         type:   'regular',
         status: 'active',
+        checkedInBy:  user.id,
       }]);
       logActivity('تسجيل دخول', ns.name, user.id);
       toast(`تم تسجيل ${ns.name} ودخوله للمكتبة`, 'success');
     } else {
       toast(`تم تسجيل ${ns.name}`, 'success');
     }
-    setForm({ name:'', phone:'', userNumber:'', notes:'', university:'', college:'', academicYear:'' });
+    setForm({ name:'', phone:'', userNumber:'', notes:'', university:'', college:'', academicYear:'', nationality:'' });
     setErrors({});
   };
 
@@ -238,6 +241,7 @@ function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
           }
         </div>
       </div>
+      <SearchableSelect label="الجنسية" value={form.nationality} onChange={v=>setForm({...form,nationality:v})} options={NATIONALITIES} placeholder="— اختر —"/>
       <Textarea label="ملاحظات" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="أي ملاحظات…" rows={2}/>
 
       {/* University / College / Year */}
@@ -280,7 +284,7 @@ function NewStudentPanel({ user, config, toast, sessions, saveSessions }) {
 /* ─── Main Hub ─── */
 export default function CashierHub({ user, config, toast }) {
   const [sessions, saveSessions, refresh] = useStorage(STORAGE_KEYS.SESSIONS, []);
-  const [invoices]           = useStorage(STORAGE_KEYS.INVOICES, []);
+  const [invoices, , refreshInvoices] = useStorage(STORAGE_KEYS.INVOICES, []);
   const [allSubs]            = useStorage(STORAGE_KEYS.STUDENT_SUBSCRIPTIONS, []);
   const [pricing]            = useStorage(STORAGE_KEYS.PRICING, DEFAULT_PRICING);
   const [checkoutSes, setCheckoutSes] = useState(null);
@@ -298,18 +302,23 @@ export default function CashierHub({ user, config, toast }) {
   const pct        = Math.round((active.length / capacity) * 100);
 
   return (
-    <div className="h-full flex flex-col gap-4 p-5 fade-in">
+    <div className="h-full flex flex-col gap-4 p-3 sm:p-5 fade-in">
 
       {/* ── Top stats bar ── */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
         <div className="flex items-center gap-2">
-          <h1 className="text-xl font-bold text-navy">الجلسات النشطة</h1>
+          <h1 className="text-lg sm:text-xl font-bold text-navy">الجلسات النشطة</h1>
           <span className="flex items-center gap-1.5 bg-teal-100 text-teal-700 text-xs font-semibold px-2.5 py-1 rounded-full">
             <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse inline-block"/>
             {active.length} نشط
           </span>
         </div>
-        <div className="flex-1 bg-white rounded-xl border border-gray-200 px-4 py-2 flex items-center gap-3 shadow-sm">
+        <div className="flex items-center gap-1.5 shrink-0 text-sm order-2 sm:order-3 ml-auto">
+          <TrendingUp size={14} className="text-teal-500"/>
+          <span className="font-semibold text-navy">{todayRev.toLocaleString('en-US')}</span>
+          <span className="text-navy-400 text-xs">{config.currency}</span>
+        </div>
+        <div className="flex-1 min-w-full sm:min-w-0 order-3 sm:order-2 bg-white rounded-xl border border-gray-200 px-4 py-2 flex items-center gap-3 shadow-sm">
           <span className="text-xs text-navy-500 shrink-0">{active.length}/{capacity}</span>
           <div className="flex-1 bg-gray-100 rounded-full h-1.5">
             <div
@@ -319,15 +328,10 @@ export default function CashierHub({ user, config, toast }) {
           </div>
           <span className="text-xs text-navy-400 shrink-0">{capacity-active.length} متاح</span>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0 text-sm">
-          <TrendingUp size={14} className="text-teal-500"/>
-          <span className="font-semibold text-navy">{todayRev.toLocaleString('en-US')}</span>
-          <span className="text-navy-400 text-xs">{config.currency}</span>
-        </div>
       </div>
 
       {/* ── Split layout ── */}
-      <div className="flex gap-4 flex-1 min-h-0">
+      <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
 
         {/* Left: Sessions table */}
         <div className="flex-1 min-w-0 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
@@ -421,7 +425,7 @@ export default function CashierHub({ user, config, toast }) {
         </div>
 
         {/* Right: Tab panel */}
-        <div className="w-80 shrink-0 bg-white rounded-2xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
+        <div className="w-full lg:w-80 lg:shrink-0 bg-white rounded-2xl shadow-sm border border-gray-200 flex flex-col overflow-hidden">
           {/* Tabs */}
           <div className="flex border-b border-gray-200">
             <button
@@ -458,7 +462,7 @@ export default function CashierHub({ user, config, toast }) {
         config={config}
         user={user}
         toast={toast}
-        onCheckedOut={()=>{ refresh(); setCheckoutSes(null); }}
+        onCheckedOut={()=>{ refresh(); refreshInvoices(); setCheckoutSes(null); }}
       />
     </div>
   );

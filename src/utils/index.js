@@ -50,32 +50,69 @@ export function calcElapsedMinutes(checkInTime) {
   return Math.floor((Date.now() - new Date(checkInTime).getTime()) / 60000);
 }
 
+// Compute billable hours with a configurable grace period.
+// e.g. graceMinutes=10: 5h 10m → 5h, but 5h 11m → 6h. Any visit > 0 min counts as ≥ 1h.
+export function calcBillableHours(minutes, graceMinutes = 10) {
+  if (!minutes || minutes <= 0) return 0;
+  return Math.max(1, Math.ceil((minutes - graceMinutes) / 60));
+}
+
 export function calcBestPrice(minutes, pricing) {
+  const grace      = Number(pricing?.graceMinutes ?? 10);
+  const extraRate  = Number(pricing?.extraHourRate ?? 0);
+  const tiers      = (pricing?.hourTiers || [])
+    .filter(t => t && t.active !== false && Number(t.hours) > 0 && Number(t.price) >= 0)
+    .map(t => ({ ...t, hours: Number(t.hours), price: Number(t.price) }))
+    .sort((a, b) => a.hours - b.hours);
+
+  const billableHours = calcBillableHours(minutes, grace);
+
+  // Tier-based pricing (primary)
+  if (tiers.length > 0) {
+    const options = tiers.map(tier => {
+      if (billableHours <= tier.hours) {
+        return {
+          type: `tier-${tier.id}`,
+          tierId: tier.id,
+          label: `أول ${tier.hours} ساعات`,
+          amount: tier.price,
+          billableHours,
+        };
+      }
+      const extras = billableHours - tier.hours;
+      return {
+        type: `tier-${tier.id}`,
+        tierId: tier.id,
+        label: `أول ${tier.hours} ساعات + ${extras} ساعة إضافية`,
+        amount: tier.price + extras * extraRate,
+        billableHours,
+        extras,
+      };
+    });
+    const best = options.reduce((min, o) => o.amount < min.amount ? o : min, options[0]);
+    return { options, best, billableHours };
+  }
+
+  // Legacy fallback (only if no tiers configured)
   const fullDays = Math.floor(minutes / 1440);
   const remMinutes = minutes % 1440;
-  const billableHours = remMinutes === 0 ? 0 : Math.max(1, Math.floor((remMinutes + 45) / 60));
+  const legacyHours = remMinutes === 0 ? 0 : Math.max(1, Math.floor((remMinutes + 45) / 60));
 
   if (fullDays > 0 && remMinutes === 0) {
     const amount = fullDays * pricing.fullDay;
     const opt = { type: 'fullDay', label: `${fullDays} يوم كامل`, amount };
     return { options: [opt], best: opt };
   }
-
   if (fullDays > 0) {
-    const amount = fullDays * pricing.fullDay + billableHours * pricing.hourly;
-    const opt = { type: 'hourly', label: `${fullDays} يوم + ${billableHours} ساعة`, amount };
+    const amount = fullDays * pricing.fullDay + legacyHours * pricing.hourly;
+    const opt = { type: 'hourly', label: `${fullDays} يوم + ${legacyHours} ساعة`, amount };
     return { options: [opt], best: opt };
   }
-
-  // Standard single-day options
-  const effectiveHours = Math.max(1, billableHours);
-  const hourlyTotal  = effectiveHours * pricing.hourly;
-  const halfDayTotal = pricing.halfDay;
-  const fullDayTotal = pricing.fullDay;
+  const effectiveHours = Math.max(1, legacyHours);
   const options = [
-    { type: 'hourly',  label: `أجر ساعي (${effectiveHours} ساعة)`,        amount: hourlyTotal  },
-    { type: 'halfDay', label: `نصف يوم (${pricing.halfDayHours} ساعات)`,   amount: halfDayTotal },
-    { type: 'fullDay', label: 'يوم كامل',                                   amount: fullDayTotal },
+    { type: 'hourly',  label: `أجر ساعي (${effectiveHours} ساعة)`,        amount: effectiveHours * pricing.hourly },
+    { type: 'halfDay', label: `نصف يوم (${pricing.halfDayHours} ساعات)`,   amount: pricing.halfDay },
+    { type: 'fullDay', label: 'يوم كامل',                                   amount: pricing.fullDay },
   ];
   const best = options.reduce((min, o) => o.amount < min.amount ? o : min, options[0]);
   return { options, best };

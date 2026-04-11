@@ -932,8 +932,8 @@ function AdminStudents({ user, config, toast }) {
                     {stuInvoices.map(inv => (
                       <div key={inv.id} className="flex justify-between items-center bg-cream-50 rounded-xl px-3 py-2 text-xs">
                         <span className="text-navy-500">{formatDate(inv.createdAt)}</span>
-                        <Badge variant={inv.priceType === 'fullDay' ? 'navy' : inv.priceType === 'halfDay' ? 'teal' : 'gold'}>
-                          {inv.priceType === 'fullDay' ? 'يوم كامل' : inv.priceType === 'halfDay' ? 'نصف يوم' : 'ساعي'}
+                        <Badge variant={inv.priceType === 'fullDay' ? 'navy' : inv.priceType === 'halfDay' ? 'teal' : inv.priceType === 'subscription' ? 'teal' : inv.priceType?.startsWith('tier-') ? 'navy' : 'gold'}>
+                          {inv.priceType === 'fullDay' ? 'يوم كامل' : inv.priceType === 'halfDay' ? 'نصف يوم' : inv.priceType === 'subscription' ? 'اشتراك' : inv.priceType?.startsWith('tier-') ? (inv.pricingLabel || 'باقة') : 'ساعي'}
                         </Badge>
                         <span className="font-semibold text-navy">{(inv.total || 0).toLocaleString('en-US')} {config.currency}</span>
                       </div>

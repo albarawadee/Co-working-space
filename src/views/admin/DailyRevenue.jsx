@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronRight, ChevronLeft, Download, BookOpen, Coffee, TrendingUp, DollarSign, CalendarDays } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ChevronRight, ChevronLeft, Download, BookOpen, Coffee, TrendingUp, DollarSign, CalendarDays, Users as UsersIcon } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { STORAGE_KEYS } from '../../constants';
 import { exportCSV } from '../../utils';
@@ -7,6 +7,7 @@ import { exportCSV } from '../../utils';
 export default function AdminDailyRevenue({ config }) {
   const [invoices] = useStorage(STORAGE_KEYS.INVOICES, []);
   const [expenses] = useStorage(STORAGE_KEYS.EXPENSES, []);
+  const [staff] = useStorage(STORAGE_KEYS.STAFF, []);
   const now = new Date();
   const [monthKey, setMonthKey] = useState(
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -53,6 +54,36 @@ export default function AdminDailyRevenue({ config }) {
     { studyHall: 0, kitchen: 0, total: 0, expense: 0, count: 0, cash: 0, transfer: 0, instapay: 0 }
   );
   totals.net = totals.total - totals.expense;
+
+  // Per-cashier breakdown for the month
+  const cashierSummary = useMemo(() => {
+    const monthInvs = invoices.filter(inv => inv.createdAt?.startsWith(monthKey));
+    const map = new Map();
+    monthInvs.forEach(inv => {
+      const id = inv.cashierId || 'unknown';
+      if (!map.has(id)) {
+        const member = staff.find(s => s.id === id);
+        map.set(id, {
+          id,
+          name: member?.name || (id === 'unknown' ? 'غير محدد' : id),
+          role: member?.role || '',
+          total: 0,
+          count: 0,
+          cash: 0,
+          transfer: 0,
+          instapay: 0,
+        });
+      }
+      const row = map.get(id);
+      row.total += inv.total || 0;
+      row.count += 1;
+      const pm = inv.paymentMethod || 'cash';
+      if (pm === 'cash') row.cash += inv.total || 0;
+      else if (pm === 'transfer') row.transfer += inv.total || 0;
+      else if (pm === 'instapay') row.instapay += inv.total || 0;
+    });
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [invoices, staff, monthKey]);
 
   const handleExport = () => {
     exportCSV(`daily-revenue-${monthKey}.csv`,
@@ -177,6 +208,64 @@ export default function AdminDailyRevenue({ config }) {
               <span className="w-3 h-3 rounded-full bg-amber-400 inline-block"></span>
               <span className="text-xs text-gray-600">المطبخ ({totals.kitchen.toLocaleString('en-US')} {cur})</span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Per-Cashier Summary */}
+      {cashierSummary.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+            <UsersIcon size={16} className="text-indigo-600" />
+            <div>
+              <h2 className="font-semibold text-navy">تحصيل الموظفين</h2>
+              <p className="text-xs text-gray-400 mt-0.5">إجمالي ما حصّله كل موظف خلال {monthLabel}</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500">
+                  <th className="px-4 py-3 text-right font-semibold">الموظف</th>
+                  <th className="px-4 py-3 text-right font-semibold">الإجمالي</th>
+                  <th className="px-4 py-3 text-right font-semibold">نقدي</th>
+                  <th className="px-4 py-3 text-right font-semibold">تحويل</th>
+                  <th className="px-4 py-3 text-right font-semibold">InstaPay</th>
+                  <th className="px-4 py-3 text-right font-semibold">عدد الفواتير</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cashierSummary.map(c => (
+                  <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-navy">{c.name}</p>
+                      {c.role && <p className="text-xs text-gray-400">{c.role}</p>}
+                    </td>
+                    <td className="px-4 py-3 font-bold text-teal-700">{c.total.toLocaleString('en-US')} {cur}</td>
+                    <td className="px-4 py-3">
+                      <span className={c.cash > 0 ? 'text-gray-700 font-medium' : 'text-gray-300'}>
+                        {c.cash > 0 ? `${c.cash.toLocaleString('en-US')} ${cur}` : '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={c.transfer > 0 ? 'text-blue-700 font-medium' : 'text-gray-300'}>
+                        {c.transfer > 0 ? `${c.transfer.toLocaleString('en-US')} ${cur}` : '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={c.instapay > 0 ? 'text-purple-700 font-medium' : 'text-gray-300'}>
+                        {c.instapay > 0 ? `${c.instapay.toLocaleString('en-US')} ${cur}` : '—'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-lg font-medium">
+                        {c.count}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
