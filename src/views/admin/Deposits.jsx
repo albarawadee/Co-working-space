@@ -1,21 +1,26 @@
 import { useState, useMemo } from 'react';
 import { Plus, Download, Search, Wallet, Users, X, ArrowUpCircle, TrendingUp } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
+import { useSubmitLock } from '../../hooks/useSubmitLock';
 import { STORAGE_KEYS } from '../../constants';
-import { generateId, formatDate, formatTime, logActivity, exportCSV } from '../../utils';
-import { Modal, Input } from '../../components/ui';
+import { supabase, generateId, formatDate, formatTime, logActivity, exportCSV, searchStudents } from '../../utils';
+import { toSnake } from '../../lib/fieldMaps';
+import { Modal, Input, RefreshButton, Pagination } from '../../components/ui';
+import { usePagination } from '../../hooks/usePagination';
 
-export default function AdminDeposits({ user, config, toast }) {
-  const [owners, saveOwners] = useStorage(STORAGE_KEYS.OWNERS, []);
-  const [students] = useStorage(STORAGE_KEYS.STUDENTS, []);
-  const [deposits, saveDeposits] = useStorage(STORAGE_KEYS.DEPOSITS, []);
+export default function AdminDeposits({ user, config, toast, onStudentClick }) {
+  const [owners, saveOwners, refreshOwners] = useStorage(STORAGE_KEYS.OWNERS, []);
+  const [students, , refreshStudents] = useStorage(STORAGE_KEYS.STUDENTS, []);
+  const [deposits, saveDeposits, refreshDeposits] = useStorage(STORAGE_KEYS.DEPOSITS, []);
 
+  const [activeTab, setActiveTab] = useState('history'); // 'history' | 'accounts'
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState('');
   const [filterOwner, setFilterOwner] = useState('');
   const [form, setForm] = useState({ ownerId: '', studentId: '', amount: '', note: '' });
   const [studentSearch, setStudentSearch] = useState('');
   const [errors, setErrors] = useState({});
+  const { run: runSave, isLocked: isSaving } = useSubmitLock();
 
   const cur = config.currency || 'ج.م';
   const selectedOwner = owners.find(o => o.id === form.ownerId);
@@ -23,14 +28,7 @@ export default function AdminDeposits({ user, config, toast }) {
 
   const filteredStudents = useMemo(() => {
     if (!studentSearch.trim()) return [];
-    const q = studentSearch.toLowerCase();
-    return students
-      .filter(s =>
-        s.name.toLowerCase().includes(q) ||
-        (s.studentId || '').toLowerCase().includes(q) ||
-        (s.phone || '').includes(q)
-      )
-      .slice(0, 6);
+    return searchStudents(students, studentSearch).slice(0, 6);
   }, [students, studentSearch]);
 
   const filteredDeposits = useMemo(() => {
@@ -46,6 +44,9 @@ export default function AdminDeposits({ user, config, toast }) {
     }
     return list;
   }, [deposits, search, filterOwner]);
+
+  const handleRefresh = () => Promise.all([refreshOwners(), refreshStudents(), refreshDeposits()]);
+  const { page, pageCount, pageItems, setPage, startIndex, endIndex, totalItems, isFirstPage, isLastPage } = usePagination(filteredDeposits, 25);
 
   const totalDeposited = deposits.reduce((s, d) => s + (d.amount || 0), 0);
   const totalBalance = owners.reduce((s, o) => s + (o.balance || 0), 0);
@@ -65,7 +66,7 @@ export default function AdminDeposits({ user, config, toast }) {
     setErrors({});
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = () => runSave(async () => {
     if (!validate()) return;
     const amt = Number(form.amount);
     const deposit = {
@@ -79,19 +80,29 @@ export default function AdminDeposits({ user, config, toast }) {
       staffId: user.id,
       createdAt: new Date().toISOString(),
     };
-    saveDeposits([deposit, ...deposits]);
-    saveOwners(owners.map(o =>
-      o.id === form.ownerId ? { ...o, balance: (o.balance || 0) + amt } : o
-    ));
-    logActivity(
-      'إضافة رصيد',
-      `${selectedOwner.name} +${amt} ${cur}${selectedStudent ? ' · ' + selectedStudent.name : ''}`,
-      user.id
-    );
-    toast(`تم إضافة ${amt} ${cur} لـ ${selectedOwner.name}`, 'success');
-    resetForm();
-    setShowForm(false);
-  };
+
+    try {
+      const newBal = (selectedOwner.balance || 0) + amt;
+      
+      // Use hook save functions instead of direct supabase calls for consistency and auto-map to snapshot
+      await Promise.all([
+        saveDeposits(prev => [deposit, ...prev]),
+        saveOwners(prev => prev.map(o => o.id === form.ownerId ? { ...o, balance: newBal } : o))
+      ]);
+      
+      logActivity(
+        'إضافة رصيد',
+        `${selectedOwner.name} +${amt} ${cur}${selectedStudent ? ' · ' + selectedStudent.name : ''}`,
+        user.id
+      );
+      toast(`تم إضافة ${amt} ${cur} لـ ${selectedOwner.name}`, 'success');
+      resetForm();
+      setShowForm(false);
+    } catch (err) {
+      console.error(err);
+      toast('حدث خطأ أثناء الحفظ - يرجى المحاولة مرة أخرى', 'error');
+    }
+  });
 
   const handleExport = () => {
     exportCSV('deposits.csv',
@@ -108,40 +119,42 @@ export default function AdminDeposits({ user, config, toast }) {
   };
 
   const formFooter = (
-    <div className="flex gap-3 justify-end">
+    <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
       <button
         onClick={() => { setShowForm(false); resetForm(); }}
-        className="px-4 py-2 rounded-xl border border-gray-200 text-gray-700 text-sm cursor-pointer hover:bg-gray-50 transition-colors"
+        className="px-4 py-2 min-h-[44px] rounded-xl border border-gray-200 text-gray-700 text-sm cursor-pointer hover:bg-gray-50 transition-colors"
       >
         إلغاء
       </button>
       <button
         onClick={handleSubmit}
-        className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 rounded-xl text-sm cursor-pointer transition-colors font-medium flex items-center gap-2"
+        disabled={isSaving}
+        className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2 min-h-[44px] rounded-xl text-sm cursor-pointer transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50"
       >
-        <ArrowUpCircle size={15} />تأكيد الإيداع
+        <ArrowUpCircle size={15} />{isSaving ? 'جاري التحفظ...' : 'تأكيد الإيداع'}
       </button>
     </div>
   );
 
   return (
-    <div className="p-6 space-y-5 fade-in">
+    <div className="p-4 sm:p-6 space-y-5 fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-navy">إضافة رصيد للحسابات</h1>
           <p className="text-sm text-gray-500 mt-0.5">إدارة وتتبع إيداعات أصحاب الحسابات</p>
         </div>
         <div className="flex items-center gap-2">
+          <RefreshButton onRefresh={handleRefresh} />
           <button
             onClick={handleExport}
-            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
+            className="border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 min-h-[44px] rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
           >
             <Download size={14} />تصدير CSV
           </button>
           <button
             onClick={() => { resetForm(); setShowForm(true); }}
-            className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
+            className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 min-h-[44px] rounded-xl text-sm font-medium transition-colors cursor-pointer flex items-center gap-2"
           >
             <Plus size={15} />إيداع جديد
           </button>
@@ -149,7 +162,7 @@ export default function AdminDeposits({ user, config, toast }) {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-200">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">
@@ -184,122 +197,289 @@ export default function AdminDeposits({ user, config, toast }) {
           </div>
         </div>
       </div>
+      
+      {/* Tabs */}
+      <div className="flex border-b border-gray-200 overflow-x-auto scrollbar-hide">
+        <button
+          onClick={() => setActiveTab('history')}
+          className={`px-6 py-3 min-h-[44px] text-sm font-medium transition-colors relative whitespace-nowrap ${
+            activeTab === 'history' ? 'text-teal-600' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          سجل الإيداعات
+          {activeTab === 'history' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-teal-600" />}
+        </button>
+        <button
+          onClick={() => setActiveTab('accounts')}
+          className={`px-6 py-3 min-h-[44px] text-sm font-medium transition-colors relative whitespace-nowrap ${
+            activeTab === 'accounts' ? 'text-teal-600' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          نظرة عامة على الحسابات
+          {activeTab === 'accounts' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-teal-600" />}
+        </button>
+      </div>
 
-      {/* Owner Balances Quick View */}
-      {owners.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
-          <h2 className="font-semibold text-navy mb-3">أرصدة الحسابات</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {owners.map(o => (
-              <div
-                key={o.id}
-                className="border border-gray-100 rounded-xl p-3 flex items-center justify-between hover:bg-gray-50 transition-colors cursor-pointer"
-                onClick={() => { resetForm(); setForm(f => ({ ...f, ownerId: o.id })); setShowForm(true); }}
-                title="انقر لإضافة رصيد"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-navy truncate">{o.name}</p>
-                  <p className="text-xs text-gray-400">{(o.studentIds || []).length} طالب</p>
-                </div>
-                <div className="text-right flex-shrink-0 mr-2">
-                  <p className={`text-sm font-bold ${(o.balance || 0) > 0 ? 'text-teal-600' : 'text-gray-400'}`}>
-                    {(o.balance || 0).toLocaleString('en-US')}
-                  </p>
-                  <p className="text-xs text-gray-400">{cur}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Deposits History */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-200">
-        <div className="p-4 border-b border-gray-100 flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="بحث بالاسم أو الطالب أو الملاحظات…"
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400"
+      {activeTab === 'history' ? (
+        <>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200">
+          <div className="p-4 border-b border-gray-100 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="بحث بالاسم أو الطالب أو الملاحظات…"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2 min-h-[44px] text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400"
+                dir="rtl"
+              />
+            </div>
+            <select
+              value={filterOwner}
+              onChange={e => setFilterOwner(e.target.value)}
+              className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 min-h-[44px] text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400"
               dir="rtl"
-            />
+            >
+              <option value="">كل الحسابات</option>
+              {owners.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+            <span className="text-sm text-gray-400 whitespace-nowrap">{filteredDeposits.length} إيداع</span>
           </div>
-          <select
-            value={filterOwner}
-            onChange={e => setFilterOwner(e.target.value)}
-            className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400"
-            dir="rtl"
-          >
-            <option value="">كل الحسابات</option>
-            {owners.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
-          <span className="text-sm text-gray-400 whitespace-nowrap">{filteredDeposits.length} إيداع</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500">
-                <th className="px-4 py-3 text-right font-semibold">التاريخ والوقت</th>
-                <th className="px-4 py-3 text-right font-semibold">صاحب الحساب</th>
-                <th className="px-4 py-3 text-right font-semibold">الطالب</th>
-                <th className="px-4 py-3 text-right font-semibold">المبلغ المُودَع</th>
-                <th className="px-4 py-3 text-right font-semibold">ملاحظات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredDeposits.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-14 text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
-                      <Wallet size={22} className="text-gray-300" />
-                    </div>
-                    <p className="text-gray-400 text-sm font-medium">لا توجد إيداعات</p>
-                    <p className="text-gray-300 text-xs mt-1">
-                      {deposits.length > 0 ? 'لا توجد نتائج للبحث' : 'ابدأ بإضافة رصيد لأحد الحسابات'}
-                    </p>
-                  </td>
+
+          {/* Desktop Table */}
+          <div className="hidden lg:block overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500">
+                  <th className="px-4 py-3 text-right font-semibold">التاريخ والوقت</th>
+                  <th className="px-4 py-3 text-right font-semibold">صاحب الحساب</th>
+                  <th className="px-4 py-3 text-right font-semibold">الطالب</th>
+                  <th className="px-4 py-3 text-right font-semibold">المبلغ المُودَع</th>
+                  <th className="px-4 py-3 text-right font-semibold">ملاحظات</th>
                 </tr>
-              ) : (
-                filteredDeposits.map(d => (
-                  <tr key={d.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
-                    <td className="px-4 py-3">
-                      <p className="text-sm text-navy font-medium">{formatDate(d.createdAt)}</p>
-                      <p className="text-xs text-gray-400">{formatTime(d.createdAt)}</p>
+              </thead>
+              <tbody>
+                {filteredDeposits.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-14 text-center">
+                      <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
+                        <Wallet size={22} className="text-gray-300" />
+                      </div>
+                      <p className="text-gray-400 text-sm font-medium">لا توجد إيداعات</p>
+                      <p className="text-gray-300 text-xs mt-1">
+                        {deposits.length > 0 ? 'لا توجد نتائج للبحث' : 'ابدأ بإضافة رصيد لأحد الحسابات'}
+                      </p>
                     </td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-navy">{d.ownerName}</p>
+                  </tr>
+                ) : (
+                  pageItems.map(d => (
+                    <tr key={d.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-150">
+                      <td className="px-4 py-3">
+                        <p className="text-sm text-navy font-medium">{formatDate(d.createdAt)}</p>
+                        <p className="text-xs text-gray-400">{formatTime(d.createdAt)}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-navy">{d.ownerName}</p>
+                        {d.ownerId && (
+                          <p className="text-xs text-gray-400">
+                            رصيد: {(owners.find(o => o.id === d.ownerId)?.balance || 0).toLocaleString('en-US')} {cur}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {d.studentName ? (
+                          <button onClick={() => d.studentId && onStudentClick?.(d.studentId)} className={`bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded-lg font-medium ${d.studentId ? 'hover:bg-indigo-100 hover:underline cursor-pointer transition-colors' : 'cursor-default'}`}>
+                            {d.studentName}
+                          </button>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-bold text-teal-700 text-base">
+                          +{d.amount.toLocaleString('en-US')} {cur}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px]">
+                        {d.note || <span className="text-gray-300">—</span>}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile Card List */}
+          <div className="lg:hidden divide-y divide-gray-100">
+            {filteredDeposits.length === 0 ? (
+              <div className="py-14 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
+                  <Wallet size={22} className="text-gray-300" />
+                </div>
+                <p className="text-gray-400 text-sm font-medium">لا توجد إيداعات</p>
+                <p className="text-gray-300 text-xs mt-1">
+                  {deposits.length > 0 ? 'لا توجد نتائج للبحث' : 'ابدأ بإضافة رصيد لأحد الحسابات'}
+                </p>
+              </div>
+            ) : (
+              pageItems.map(d => (
+                <div key={d.id} className="bg-white rounded-xl border border-gray-100 p-4 mx-3 my-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-navy truncate">{d.ownerName}</p>
                       {d.ownerId && (
                         <p className="text-xs text-gray-400">
                           رصيد: {(owners.find(o => o.id === d.ownerId)?.balance || 0).toLocaleString('en-US')} {cur}
                         </p>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {d.studentName ? (
-                        <span className="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded-lg font-medium">
-                          {d.studentName}
-                        </span>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-bold text-teal-700 text-base">
-                        +{d.amount.toLocaleString('en-US')} {cur}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px]">
-                      {d.note || <span className="text-gray-300">—</span>}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                    </div>
+                    <span className="font-bold text-teal-700 text-base whitespace-nowrap">
+                      +{d.amount.toLocaleString('en-US')} {cur}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between mt-2 gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-400">{formatDate(d.createdAt)}</span>
+                      <span className="text-xs text-gray-300">{formatTime(d.createdAt)}</span>
+                    </div>
+                    {d.studentName ? (
+                      <button onClick={() => d.studentId && onStudentClick?.(d.studentId)} className={`bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded-lg font-medium min-h-[44px] flex items-center ${d.studentId ? 'hover:bg-indigo-100 hover:underline cursor-pointer transition-colors' : 'cursor-default'}`}>
+                        {d.studentName}
+                      </button>
+                    ) : null}
+                  </div>
+                  {d.note && (
+                    <p className="text-xs text-gray-500 mt-2">{d.note}</p>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
-      </div>
+        <Pagination page={page} pageCount={pageCount} setPage={setPage} startIndex={startIndex} endIndex={endIndex} totalItems={totalItems} isFirstPage={isFirstPage} isLastPage={isLastPage} />
+        </>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200">
+          <div className="p-4 border-b border-gray-100 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="بحث عن صاحب حساب أو طالب…"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2 min-h-[44px] text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400"
+                dir="rtl"
+              />
+            </div>
+            <span className="text-sm text-gray-400 whitespace-nowrap">{owners.length} حساب</span>
+          </div>
+
+          {/* Desktop Table */}
+          <div className="hidden lg:block overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500">
+                  <th className="px-4 py-3 text-right font-semibold">صاحب الحساب</th>
+                  <th className="px-4 py-3 text-right font-semibold">الطلاب المرتبطين</th>
+                  <th className="px-4 py-3 text-right font-semibold">الرصيد الحالي</th>
+                  <th className="px-4 py-3 text-center font-semibold">إجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {owners.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-14 text-center text-gray-400">لا توجد حسابات مسجلة بعد</td>
+                  </tr>
+                ) : (
+                  owners
+                    .filter(o => !search.trim() || o.name.toLowerCase().includes(search.toLowerCase()))
+                    .map(o => (
+                      <tr key={o.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3">
+                          <p className="font-bold text-navy">{o.name}</p>
+                          <p className="text-xs text-gray-400">{o.phone || 'بدون هاتف'}</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {(o.studentIds || []).length > 0 ? (
+                              o.studentIds.map(sid => {
+                                const s = students.find(st => st.id === sid);
+                                return s ? (
+                                  <span key={sid} className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded">
+                                    {s.name}
+                                  </span>
+                                ) : null;
+                              })
+                            ) : (
+                              <span className="text-gray-300 text-xs">لا يوجد طلاب</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-base font-black ${(o.balance || 0) > 0 ? 'text-teal-600' : 'text-gray-400'}`}>
+                            {(o.balance || 0).toLocaleString('en-US')} {cur}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={() => { resetForm(); setForm(f => ({ ...f, ownerId: o.id })); setShowForm(true); }}
+                            className="text-teal-600 hover:text-teal-700 text-xs font-bold border border-teal-100 hover:border-teal-200 px-3 py-1 min-h-[44px] rounded-lg transition-colors cursor-pointer"
+                          >
+                            + إضافة رصيد
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile Card List */}
+          <div className="lg:hidden divide-y divide-gray-100">
+            {owners.length === 0 ? (
+              <div className="py-14 text-center text-gray-400">لا توجد حسابات مسجلة بعد</div>
+            ) : (
+              owners
+                .filter(o => !search.trim() || o.name.toLowerCase().includes(search.toLowerCase()))
+                .map(o => (
+                  <div key={o.id} className="bg-white rounded-xl border border-gray-100 p-4 mx-3 my-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-navy">{o.name}</p>
+                        <p className="text-xs text-gray-400">{o.phone || 'بدون هاتف'}</p>
+                      </div>
+                      <span className={`text-base font-black whitespace-nowrap ${(o.balance || 0) > 0 ? 'text-teal-600' : 'text-gray-400'}`}>
+                        {(o.balance || 0).toLocaleString('en-US')} {cur}
+                      </span>
+                    </div>
+                    {(o.studentIds || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {o.studentIds.map(sid => {
+                          const s = students.find(st => st.id === sid);
+                          return s ? (
+                            <span key={sid} className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded">
+                              {s.name}
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        onClick={() => { resetForm(); setForm(f => ({ ...f, ownerId: o.id })); setShowForm(true); }}
+                        className="text-teal-600 hover:text-teal-700 text-xs font-bold border border-teal-100 hover:border-teal-200 px-3 py-1 min-h-[44px] rounded-lg transition-colors cursor-pointer flex items-center"
+                      >
+                        + إضافة رصيد
+                      </button>
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Add Deposit Modal */}
       <Modal
@@ -315,7 +495,7 @@ export default function AdminDeposits({ user, config, toast }) {
             <select
               value={form.ownerId}
               onChange={e => setForm({ ...form, ownerId: e.target.value })}
-              className={`w-full bg-gray-50 border rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400 ${
+              className={`w-full bg-gray-50 border rounded-xl px-3 py-2.5 min-h-[44px] text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400 ${
                 errors.ownerId ? 'border-red-400' : 'border-gray-200'
               }`}
               dir="rtl"
@@ -358,7 +538,7 @@ export default function AdminDeposits({ user, config, toast }) {
                 </div>
                 <button
                   onClick={() => { setForm({ ...form, studentId: '' }); setStudentSearch(''); }}
-                  className="p-1 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
+                  className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
                 >
                   <X size={15} />
                 </button>
@@ -370,7 +550,7 @@ export default function AdminDeposits({ user, config, toast }) {
                   value={studentSearch}
                   onChange={e => setStudentSearch(e.target.value)}
                   placeholder="ابحث بالاسم أو كود الطالب أو الهاتف…"
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl pr-9 pl-3 py-2.5 min-h-[44px] text-sm outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"
                   dir="rtl"
                 />
                 {filteredStudents.length > 0 && (
@@ -379,7 +559,7 @@ export default function AdminDeposits({ user, config, toast }) {
                       <button
                         key={s.id}
                         onClick={() => { setForm({ ...form, studentId: s.id }); setStudentSearch(''); }}
-                        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-indigo-50 transition-colors cursor-pointer text-right border-b border-gray-100 last:border-0"
+                        className="w-full flex items-center justify-between px-4 py-2.5 min-h-[44px] hover:bg-indigo-50 transition-colors cursor-pointer text-right border-b border-gray-100 last:border-0"
                       >
                         <div>
                           <p className="text-sm font-medium text-navy">{s.name}</p>
@@ -436,7 +616,7 @@ export default function AdminDeposits({ user, config, toast }) {
               onChange={e => setForm({ ...form, note: e.target.value })}
               placeholder="أي ملاحظات على هذا الإيداع…"
               rows={2}
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400 resize-none"
+              className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 min-h-[44px] text-sm outline-none focus:ring-2 focus:ring-teal-300 focus:border-teal-400 resize-none"
               dir="rtl"
             />
           </div>
