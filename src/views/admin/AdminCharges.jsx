@@ -70,7 +70,10 @@ export default function AdminCharges({ user, config, toast, onStudentClick }) {
     const pending = charges.filter(c => c.adminId === adminId && !c.settled).filter(periodFilter);
     if (!pending.length) { toast('لا توجد مديونيات معلقة', 'info'); return; }
     const ids = pending.map(c => c.id);
-    const total = pending.reduce((s, c) => s + (c.source === 'kitchen' ? -(c.amount || 0) : (c.amount || 0)), 0);
+    // Both session and kitchen sources are debts the staff owes — sum positive.
+    // (Previously kitchen was subtracted, giving |session - kitchen| in the toast
+    // which under-reported the settled amount when staff had mixed-source debts.)
+    const total = pending.reduce((s, c) => s + (c.amount || 0), 0);
     setSettling('bulk-' + adminId);
     try {
       const now = new Date().toISOString();
@@ -81,7 +84,7 @@ export default function AdminCharges({ user, config, toast, onStudentClick }) {
       if (error) throw error;
       const idSet = new Set(ids);
       saveCharges(prev => prev.map(c => idSet.has(c.id) ? { ...c, settled: true, settledAt: now } : c));
-      toast(`تمت تسوية ${ids.length} سجل — ${Math.abs(total).toLocaleString('en-US')} ${config.currency}`, 'success');
+      toast(`تمت تسوية ${ids.length} سجل — ${total.toLocaleString('en-US')} ${config.currency}`, 'success');
       setStaffModal(null);
     } catch (err) {
       toast(err?.message || 'حدث خطأ', 'error');
@@ -158,15 +161,19 @@ export default function AdminCharges({ user, config, toast, onStudentClick }) {
                 <span className="mr-auto text-[10px] text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">اضغط للتفاصيل</span>
               </div>
               <p className="text-2xl font-bold text-red-600">
-                -{a.debt.toLocaleString('en-US')}
+                {a.debt.toLocaleString('en-US')}
               </p>
               <p className="text-xs text-gray-400 mt-0.5">
                 {config.currency} مدين
               </p>
-              {(a.sessionTotal > 0 && a.kitchenTotal > 0) && (
+              {(a.sessionTotal > 0 || a.kitchenTotal > 0) && (
                 <div className="flex gap-3 mt-2 text-[10px]">
-                  <span className="text-red-500">جلسات: -{a.sessionTotal.toLocaleString('en-US')}</span>
-                  <span className="text-red-500">مطبخ: -{a.kitchenTotal.toLocaleString('en-US')}</span>
+                  {a.sessionTotal > 0 && (
+                    <span className="text-red-500">جلسات: {a.sessionTotal.toLocaleString('en-US')}</span>
+                  )}
+                  {a.kitchenTotal > 0 && (
+                    <span className="text-red-500">مطبخ: {a.kitchenTotal.toLocaleString('en-US')}</span>
+                  )}
                 </div>
               )}
               <button
@@ -272,7 +279,7 @@ export default function AdminCharges({ user, config, toast, onStudentClick }) {
                   </td>
                   <td className="px-4 py-3">
                     <span className="font-bold text-red-600">
-                      -{(c.amount || 0).toLocaleString('en-US')} {config.currency}
+                      {(c.amount || 0).toLocaleString('en-US')} {config.currency}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">{formatDateTime(c.createdAt)}</td>
@@ -336,7 +343,7 @@ export default function AdminCharges({ user, config, toast, onStudentClick }) {
               </div>
               <div className="flex items-center justify-between">
                 <span className="font-bold text-red-600">
-                  -{(c.amount || 0).toLocaleString('en-US')} {config.currency}
+                  {(c.amount || 0).toLocaleString('en-US')} {config.currency}
                 </span>
                 <span className="text-xs text-gray-400">{formatDateTime(c.createdAt)}</span>
               </div>
@@ -362,16 +369,16 @@ export default function AdminCharges({ user, config, toast, onStudentClick }) {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
               <div className="bg-red-50 rounded-xl p-3">
                 <p className="text-xs text-red-600 font-bold mb-1">جلسات</p>
-                <p className="text-lg font-bold text-red-600">-{staffModal.sessionTotal.toLocaleString('en-US')}</p>
+                <p className="text-lg font-bold text-red-600">{staffModal.sessionTotal.toLocaleString('en-US')}</p>
               </div>
               <div className="bg-red-50 rounded-xl p-3">
                 <p className="text-xs text-red-600 font-bold mb-1">مطبخ</p>
-                <p className="text-lg font-bold text-red-600">-{staffModal.kitchenTotal.toLocaleString('en-US')}</p>
+                <p className="text-lg font-bold text-red-600">{staffModal.kitchenTotal.toLocaleString('en-US')}</p>
               </div>
               <div className="rounded-xl p-3 bg-red-50">
                 <p className="text-xs text-gray-500 font-bold mb-1">إجمالي الدين</p>
                 <p className="text-lg font-bold text-red-600">
-                  -{staffModal.debt.toLocaleString('en-US')} {config.currency}
+                  {staffModal.debt.toLocaleString('en-US')} {config.currency}
                 </p>
               </div>
             </div>
@@ -390,7 +397,7 @@ export default function AdminCharges({ user, config, toast, onStudentClick }) {
                     <tr key={c.id} className="border-t border-gray-50 hover:bg-gray-50">
                       <td className="px-3 py-2">{c.studentId ? <button onClick={() => onStudentClick?.(c.studentId)} className="font-medium text-navy hover:text-indigo-600 hover:underline cursor-pointer transition-colors">{c.studentName}</button> : (c.studentName || '—')}</td>
                       <td className="px-3 py-2 font-bold text-red-600">
-                        -{(c.amount || 0).toLocaleString('en-US')}
+                        {(c.amount || 0).toLocaleString('en-US')}
                       </td>
                       <td className="px-3 py-2 text-xs text-gray-400">{c.source === 'kitchen' ? 'مطبخ' : 'جلسة'}</td>
                       <td className="px-3 py-2 text-xs text-gray-400">{c.createdAt?.slice(0,10)}</td>
