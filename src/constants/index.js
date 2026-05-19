@@ -6,6 +6,7 @@ export const STORAGE_KEYS = {
   PRODUCTS:              'lib-products',
   CATEGORIES:            'lib-categories',
   EXPENSES:              'lib-expenses',
+  CENTER_EXPENSES:       'lib-center-expenses',
   STAFF:                 'lib-staff',
   CONFIG:                'lib-config',
   PRICING:               'lib-pricing',
@@ -18,6 +19,30 @@ export const STORAGE_KEYS = {
   GATEWAY_CONFIG:        'lib-gateway-config',
   GATEWAY_LOGS:          'lib-gateway-logs',
   ADMIN_CHARGES:         'lib-admin-charges',
+  STOCK_MOVEMENTS:       'lib-stock-movements',
+  SHIFTS:                'lib-shifts',
+  SAFE_TRANSACTIONS:     'lib-safe-transactions',
+  ADMIN_COLLECTIONS:     'lib-admin-collections',
+  DEBTS:                 'lib-debts',
+  CASH_ADJUSTMENTS:      'lib-cash-adjustments',
+  SALARY_CONFIGS:        'lib-salary-configs',
+  PAYROLL_ENTRIES:       'lib-payroll-entries',
+  PRODUCT_RECIPES:       'lib-product-recipes',
+  CUSTODY_HANDOVERS:     'lib-custody-handovers',
+  // WiFi Network Management
+  WIFI_SESSION_TIERS:    'lib-wifi-session-tiers',
+  WIFI_SESSIONS:         'lib-wifi-sessions',
+  WIFI_VOUCHER_BATCHES:  'lib-wifi-voucher-batches',
+  WIFI_FULL_ACCESS:      'lib-wifi-full-access',
+  WIFI_BLOCKED_CATEGORIES: 'lib-wifi-blocked-categories',
+  WIFI_BLOCKED_DOMAINS:  'lib-wifi-blocked-domains',
+  WIFI_WALLED_GARDEN:    'lib-wifi-walled-garden',
+  WIFI_USAGE_LOGS:       'lib-wifi-usage-logs',
+  WIFI_EVENTS:           'lib-wifi-events',
+  // WiFi v2 (Phase 1 — parallel system, see WIFI-SYSTEM.md §14)
+  WIFI_DEVICES:          'lib-wifi-devices',
+  WIFI_PROFILES_V2:      'lib-wifi-profiles-v2',
+  WIFI_REALTIME_EVENTS:  'lib-wifi-realtime-events',
 };
 
 export const DEFAULT_GATEWAY_CONFIG = {
@@ -37,8 +62,9 @@ export const DEFAULT_CONFIG = {
   openTime:     '08:00',
   closeTime:    '24:00',
   dayStartHour: 8,
-  universities: [],
-  colleges:     [],
+  universities:  [],
+  colleges:      [],
+  lectureHalls:  [],
 };
 
 export const NATIONALITIES = [
@@ -103,6 +129,7 @@ export const DEFAULT_PRICING = {
   ],
   extraHourRate: 10, // price per extra hour beyond a tier's base hours
   graceMinutes:  10, // first N minutes of a new hour are free (don't bump to next hour)
+  freeMinutes:   15, // first N minutes of ANY session are completely free (no charge at all)
 };
 
 export const DEFAULT_STAFF = [
@@ -135,34 +162,71 @@ import {
   Home, Users, Users2, UserPlus, Shield, Coffee, Wifi, Settings,
   Check, Package, Tag, Receipt, BarChart2,
   ShoppingCart, Activity, Clock, FileText, Wallet,
-  CalendarDays, ArrowUpCircle, CreditCard, Globe,
+  CalendarDays, ArrowUpCircle, CreditCard, Globe, Warehouse, Banknote,
+  AlarmClock, ScrollText, Landmark, TrendingUp,
 } from 'lucide-react';
 
 export const MENU = {
   admin: [
-    { view: 'admin_dashboard', label: 'لوحة التحكم',  icon: Home      },
-    { view: 'admin_students',  label: 'الطلاب',        icon: Users     },
-    { view: 'admin_staff',     label: 'الموظفون',      icon: Shield    },
-    { view: 'admin_owners',    label: 'الحسابات',       icon: Wallet    },
-    { view: 'admin_pricing',       label: 'الأسعار',        icon: Tag        },
-    { view: 'admin_subscriptions', label: 'الاشتراكات',    icon: CreditCard },
-    { view: 'admin_products',  label: 'المنتجات',       icon: Package   },
-    { view: 'admin_expenses',  label: 'المصروفات',       icon: Receipt      },
-    { view: 'admin_reports',   label: 'التقارير',         icon: BarChart2    },
-    { view: 'admin_daily',     label: 'الإيرادات اليومية', icon: CalendarDays },
-    { view: 'admin_staff_revenue', label: 'تحصيل الموظفين', icon: UserPlus  },
-    { view: 'admin_deposits',      label: 'إضافة رصيد',      icon: ArrowUpCircle },
-    { view: 'admin_wallet_subs',   label: 'الرصيد والاشتراكات', icon: Wallet     },
-    { view: 'admin_charges',       label: 'مستحقات الموظفين',   icon: Receipt    },
-    { view: 'admin_internet_gate', label: 'بوابة الإنترنت',   icon: Globe         },
-    { view: 'admin_settings',      label: 'الإعدادات',       icon: Settings      },
+    // ── الرئيسية
+    { section: 'الرئيسية' },
+    { view: 'admin_dashboard', label: 'لوحة التحكم',    icon: Home  },
+    { view: 'admin_sessions',  label: 'الجلسات النشطة', icon: Clock },
+
+    // ── الطلاب
+    { section: 'الطلاب' },
+    { view: 'admin_students',     label: 'الطلاب',              icon: Users      },
+    { view: 'admin_wallet_subs',  label: 'الرصيد والاشتراكات', icon: Wallet     },
+    { view: 'admin_log',          label: 'سجل الحضور اليومي',  icon: ScrollText },
+
+    // ── المالية
+    { section: 'المالية' },
+    { view: 'admin_financial',   label: 'السجل المالي',       icon: Landmark      },
+    { view: 'admin_collections', label: 'تحصيل الأموال',    icon: ArrowUpCircle },
+    { view: 'admin_daily',       label: 'الإيرادات اليومية', icon: CalendarDays  },
+    { view: 'admin_expenses',    label: 'المصروفات',          icon: Receipt       },
+    { view: 'admin_center_expenses', label: 'مصروفات السنتر', icon: Wallet      },
+    { view: 'admin_reports',     label: 'التقارير',           icon: BarChart2     },
+
+    // ── الموظفون
+    { section: 'الموظفون' },
+    { view: 'admin_staff',         label: 'الموظفون',          icon: Shield    },
+    { view: 'admin_debts',         label: 'الديون',             icon: Receipt   },
+    { view: 'admin_staff_revenue', label: 'تحصيل الموظفين',    icon: UserPlus  },
+    { view: 'admin_charges',       label: 'مديونيات الموظفين', icon: Banknote  },
+    { view: 'admin_payroll',       label: 'الرواتب',            icon: Banknote  },
+    { view: 'admin_shifts',        label: 'الشفتات',            icon: AlarmClock },
+
+    // ── المطبخ
+    { section: 'المطبخ' },
+    { view: 'cashier_guest_orders',  label: 'طلبات البوابة',  icon: UserPlus },
+    { view: 'kitchen_new_order',     label: 'طلب جديد',       icon: ShoppingCart },
+    { view: 'kitchen_active_orders', label: 'الطلبات النشطة', icon: Activity     },
+    { view: 'kitchen_products',      label: 'القائمة',         icon: Coffee       },
+    { view: 'admin_kitchen_capital', label: 'إدارة المطبخ', icon: TrendingUp   },
+    { view: 'admin_sales_ledger',   label: 'سجل المبيعات', icon: Receipt     },
+
+    // ── الإعداد
+    { section: 'الإعداد' },
+    { view: 'admin_pricing',       label: 'الأسعار',        icon: Tag       },
+    { view: 'admin_subscriptions', label: 'خطط الاشتراك',   icon: CreditCard },
+    { view: 'admin_products',      label: 'المنتجات',        icon: Package   },
+    { view: 'admin_inventory',     label: 'المخزون',         icon: Warehouse },
+    { view: 'admin_network',       label: 'إدارة الشبكة',     icon: Wifi      },
+    { view: 'admin_network_v2',    label: 'إدارة الشبكة v2',  icon: Wifi      },
+    { view: 'admin_free_sites',    label: 'المواقع المجانية', icon: Globe     },
+    { view: 'admin_settings',      label: 'الإعدادات',       icon: Settings  },
   ],
   cashier: [
     { view: 'cashier_hub',           label: 'الجلسات والدخول',  icon: Users    },
     { view: 'cashier_students',      label: 'الطلاب',            icon: Users2   },
     { view: 'cashier_wallet_subs',   label: 'الرصيد والاشتراكات', icon: Wallet  },
+    { view: 'cashier_guest_orders',  label: 'طلبات البوابة',     icon: UserPlus },
     { view: 'cashier_internet_gate', label: 'بوابة الإنترنت',   icon: Globe    },
+    { view: 'cashier_network_v2',    label: 'بوابة الإنترنت v2', icon: Globe   },
     { view: 'cashier_log',           label: 'سجل اليوم',        icon: FileText },
+    { view: 'cashier_debts',         label: 'الديون',          icon: Receipt      },
+    { view: 'admin_center_expenses', label: 'مصروفات السنتر',  icon: Wallet       },
     { view: 'kitchen_new_order',     label: 'طلب جديد',         icon: ShoppingCart },
     { view: 'kitchen_active_orders', label: 'الطلبات النشطة',   icon: Activity     },
     { view: 'kitchen_products',      label: 'القائمة',           icon: Coffee       },
@@ -170,13 +234,64 @@ export const MENU = {
   kitchen: [
     { view: 'kitchen_new_order',     label: 'طلب جديد',       icon: ShoppingCart },
     { view: 'kitchen_active_orders', label: 'الطلبات النشطة', icon: Activity     },
+    { view: 'cashier_guest_orders',  label: 'طلبات البوابة',  icon: UserPlus     },
+    { view: 'kitchen_custody',       label: 'العهدة النقدية',  icon: Wallet       },
     { view: 'kitchen_log',           label: 'سجل المطبخ',      icon: Clock        },
     { view: 'kitchen_products',      label: 'القائمة',          icon: Coffee       },
+  ],
+  employee: [
+    { view: 'cashier_hub',           label: 'الجلسات والدخول',  icon: Users    },
+    { view: 'cashier_students',      label: 'الطلاب',            icon: Users2   },
+    { view: 'cashier_wallet_subs',   label: 'الرصيد والاشتراكات', icon: Wallet  },
+    { view: 'cashier_internet_gate', label: 'بوابة الإنترنت',   icon: Globe    },
+    { view: 'cashier_network_v2',    label: 'بوابة الإنترنت v2', icon: Globe   },
+    { view: 'cashier_log',           label: 'سجل اليوم',        icon: FileText },
+    { view: 'cashier_debts',         label: 'الديون',          icon: Receipt      },
+    { view: 'admin_center_expenses', label: 'مصروفات السنتر',  icon: Wallet       },
+    { view: 'kitchen_new_order',     label: 'طلب جديد',         icon: ShoppingCart },
+    { view: 'kitchen_active_orders', label: 'الطلبات النشطة',   icon: Activity     },
+    { view: 'kitchen_products',      label: 'القائمة',           icon: Coffee       },
   ],
 };
 
 export const DEFAULT_VIEWS = {
-  admin:   'admin_dashboard',
-  cashier: 'cashier_hub',
-  kitchen: 'kitchen_active_orders',
+  admin:    'admin_dashboard',
+  cashier:  'cashier_hub',
+  kitchen:  'kitchen_active_orders',
+  employee: 'cashier_hub',
+};
+
+// Role-based view access control — explicit allowlist per role
+export const ROLE_VIEWS = {
+  admin: Object.keys({
+    admin_dashboard:1, admin_sessions:1, admin_students:1, admin_staff:1,
+    admin_pricing:1, admin_products:1, admin_expenses:1, admin_center_expenses:1, admin_reports:1,
+    admin_settings:1, admin_daily:1, admin_staff_revenue:1, admin_deposits:1,
+    admin_subscriptions:1, admin_network:1, admin_network_v2:1, admin_free_sites:1, admin_wallet_subs:1,
+    admin_shifts:1, admin_charges:1, admin_inventory:1, admin_log:1,
+    admin_collections:1, admin_debts:1, admin_wallets:1, admin_payroll:1,
+    admin_financial:1, admin_kitchen_capital:1, admin_sales_ledger:1,
+    // Admin can also access cashier/kitchen views
+    cashier_hub:1, cashier_current:1, cashier_checkin:1, cashier_students:1,
+    cashier_new_student:1, cashier_internet_gate:1, cashier_network_v2:1, cashier_wallet_subs:1,
+    cashier_debts:1, cashier_wallets:1, cashier_guest_orders:1, cashier_log:1,
+    kitchen_new_order:1, kitchen_active_orders:1, kitchen_custody:1, kitchen_log:1, kitchen_products:1,
+  }),
+  cashier: [
+    'cashier_hub', 'cashier_current', 'cashier_checkin', 'cashier_students',
+    'cashier_new_student', 'cashier_internet_gate', 'cashier_network_v2', 'cashier_wallet_subs',
+    'cashier_debts', 'cashier_wallets', 'cashier_guest_orders', 'cashier_log',
+    'kitchen_new_order', 'kitchen_active_orders', 'kitchen_products',
+    'admin_center_expenses',
+  ],
+  kitchen: [
+    'kitchen_new_order', 'kitchen_active_orders', 'cashier_guest_orders', 'kitchen_custody', 'kitchen_log', 'kitchen_products',
+  ],
+  employee: [
+    'cashier_hub', 'cashier_current', 'cashier_checkin', 'cashier_students',
+    'cashier_new_student', 'cashier_internet_gate', 'cashier_network_v2', 'cashier_wallet_subs',
+    'cashier_debts', 'cashier_wallets', 'cashier_guest_orders', 'cashier_log',
+    'kitchen_new_order', 'kitchen_active_orders', 'kitchen_products',
+    'admin_center_expenses',
+  ],
 };
