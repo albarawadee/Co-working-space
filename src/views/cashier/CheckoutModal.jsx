@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Check, Wallet, CreditCard, Loader, ChevronDown, ChevronUp, Plus, Minus, X, UserCheck, Zap, AlertTriangle } from 'lucide-react';
 import { useStorage } from '../../hooks/useStorage';
 import { useSubmitLock } from '../../hooks/useSubmitLock';
+import { trackedWrites } from '../../hooks/useInFlightTracker';
 import { STORAGE_KEYS, DEFAULT_PRICING } from '../../constants';
 import { supabase, generateId, formatTime, formatDate, calcElapsedMinutes, calcBestPrice, calcBillableHours, logActivity, getActiveSubscription, resolveSubscriptionBilling, localDateStr, matchOfferCriteria, computeRecipeStockChanges, isActiveOrder, settleStudentDebts } from '../../utils';
 import { toSnake } from '../../lib/fieldMaps';
@@ -222,10 +223,46 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
     const invoiceId = generateId('inv');
 
     try {
+      // Refetch fresh server state for the two stale-prone inputs (wallet + debts).
+      // The useStorage closures captured these at modal-open time — Realtime usually
+      // keeps them current, but a concurrent topup/charge from another tab can drift
+      // the values between modal-open and submit.
+      const { data: freshStudent, error: sErr } = await supabase
+        .from('students')
+        .select('id, wallet_balance, name')
+        .eq('id', session.studentId)
+        .maybeSingle();
+      if (sErr || !freshStudent) throw sErr || new Error('Student not found');
+      const freshWalletBalance = Number(freshStudent.wallet_balance) || 0;
+
+      const { data: freshDebtsRows, error: dErr } = await supabase
+        .from('debts')
+        .select('id, person_id, person_type, type, source, amount, created_at, in_custody')
+        .eq('person_id', session.studentId)
+        .eq('person_type', 'student');
+      if (dErr) throw dErr;
+      const freshDebts = (freshDebtsRows || []).map(d => ({
+        id: d.id, personId: d.person_id, personType: d.person_type,
+        type: d.type, source: d.source, amount: d.amount,
+        createdAt: d.created_at, inCustody: d.in_custody,
+      }));
+      const freshNetDebt = freshDebts.reduce((sum, d) =>
+        d.type === 'borrow' ? sum + (d.amount || 0) : sum - (d.amount || 0), 0);
+      const freshInstallmentDebt = Math.max(0, freshNetDebt);
+
+      // Divergence guard — if what the cashier saw on screen no longer matches
+      // the server, abort and force a re-read. Avoid silently proceeding with
+      // stale figures that the cashier never approved.
+      if (Math.abs(freshWalletBalance - walletBalance) > 0.5
+          || Math.abs(freshInstallmentDebt - existingInstallmentDebt) > 0.5) {
+        toast('تغيّر رصيد الطالب/مديونيته — أعد فحص الشاشة قبل التأكيد', 'error');
+        return;
+      }
+
       const writes = [];
 
       // Track running wallet balance — all wallet ops update this, written ONCE at the end
-      let runningWallet = walletBalance;
+      let runningWallet = freshWalletBalance;
 
       // 1. Wallet Deduction (If used for split)
       if (walletToApply > 0) {
@@ -358,7 +395,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
           const sessionDate = formatDate(session.checkInTime);
           const sessionTime = formatTime(session.checkInTime);
           writes.push(
-            supabase.from('debts').insert(toSnake({
+            supabase.from('debts').upsert(toSnake({
               id: generateId('debt'),
               personId: session.studentId,
               personName: session.studentName,
@@ -371,7 +408,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
               cashierId: user.id === 'admin' ? null : user.id,
               cashierName: user.name || '',
               createdAt: now,
-            }))
+            }), { onConflict: 'id' })
           );
         }
 
@@ -383,7 +420,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
             .map(i => `${i.productName || i.product_name}×${i.qty}`)
             .join('، ');
           writes.push(
-            supabase.from('debts').insert(toSnake({
+            supabase.from('debts').upsert(toSnake({
               id: generateId('debt'),
               personId: session.studentId,
               personName: session.studentName,
@@ -396,7 +433,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
               cashierId: user.id === 'admin' ? null : user.id,
               cashierName: user.name || '',
               createdAt: now,
-            }))
+            }), { onConflict: 'id' })
           );
         }
       }
@@ -416,7 +453,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
           studentId: session.studentId,
           studentName: session.studentName,
           cashIn: settleNum,
-          debts,
+          debts: freshDebts,
           walletBalance: runningWallet,
           cashierId: user.id === 'admin' ? null : user.id,
           cashierName: user.name || '',
@@ -448,7 +485,7 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
       }
 
       // Single consolidated wallet balance write (avoids race conditions from multiple concurrent writes)
-      if (runningWallet !== walletBalance) {
+      if (runningWallet !== freshWalletBalance) {
         writes.push(
           supabase.from('students').update({
             wallet_balance: runningWallet,
@@ -631,6 +668,20 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
         );
       }
 
+      // Mark session kitchen orders as paid — kept INSIDE the main writes batch
+      // so a partial failure doesn't leave the cashier with a closed session but
+      // unpaid kitchen orders (which would let a second checkout double-charge).
+      const sessionOrderIds = (orders || [])
+        .filter(o => o.sessionId === session.id && isActiveOrder(o))
+        .map(o => o.id);
+      if (sessionOrderIds.length > 0) {
+        writes.push(
+          supabase.from('kitchen_orders')
+            .update({ paid: true, status: 'delivered', updated_at: now })
+            .in('id', sessionOrderIds)
+        );
+      }
+
       // 5. Close session
       writes.push(
         supabase.from('sessions').update({
@@ -640,22 +691,12 @@ export default function CheckoutModal({ open, onClose, session, config, user, to
         }).eq('id', session.id)
       );
 
-      const results = await Promise.all(writes);
+      const results = await trackedWrites(writes);
       const firstErr = results.find(r => r.error);
       if (firstErr?.error) throw firstErr.error;
 
       const checkoutStudent = students.find(s => s.id === session.studentId);
       if (checkoutStudent?.studentId) mtkDisable(config, checkoutStudent).catch(() => {});
-
-      // Mark session kitchen orders as paid
-      const sessionOrderIds = (orders || [])
-        .filter(o => o.sessionId === session.id && isActiveOrder(o))
-        .map(o => o.id);
-      if (sessionOrderIds.length > 0) {
-        await supabase.from('kitchen_orders')
-          .update({ paid: true, status: 'delivered', updated_at: new Date().toISOString() })
-          .in('id', sessionOrderIds);
-      }
 
       // Fire-and-forget log
       if (isAdminSplit) {
