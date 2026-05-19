@@ -687,6 +687,10 @@ export default function Wallets({ config, user }) {
   }, [filtered, tab, studentDebtMap]);
 
   // ── Delete transaction ──
+  // Both writes go in a single Promise.all so a partial failure surfaces BEFORE
+  // logActivity fires. useSupabaseTable.save already auto-reverts its own
+  // optimistic state on non-network errors; the explicit refresh covers the
+  // other one (the half that did land) so the UI never silently drifts.
   const handleDeleteTx = async (tx) => {
     if (!confirm('هل أنت متأكد من حذف هذه المعاملة؟ سيتم عكس تأثيرها على الرصيد.')) return;
     const student = students.find(s => s.id === tx.studentId);
@@ -694,13 +698,17 @@ export default function Wallets({ config, user }) {
     const diff = tx.type === 'topup' ? -tx.amount : tx.amount;
     const newBalance = (student.walletBalance || 0) + diff;
     try {
-      await saveStudents(prev => prev.map(s => s.id === student.id ? { ...s, walletBalance: newBalance } : s));
-      await saveWalletTxs(prev => prev.filter(t => t.id !== tx.id));
+      await Promise.all([
+        saveStudents(prev => prev.map(s => s.id === student.id ? { ...s, walletBalance: newBalance } : s)),
+        saveWalletTxs(prev => prev.filter(t => t.id !== tx.id)),
+      ]);
       logActivity('حذف معاملة محفظة', `حذف ${tx.type === 'topup' ? 'شحن' : 'خصم'} بقيمة ${tx.amount} للطالب ${student.name}`, 'admin');
       if (selected?.id === student.id) setSelected({ ...student, walletBalance: newBalance });
     } catch (err) {
       console.error('Delete Tx Error:', err);
       alert(`حدث خطأ أثناء الحذف: ${err.message || 'خطأ غير معروف'}`);
+      refreshStudents();
+      refreshWalletTxs();
     }
   };
 
