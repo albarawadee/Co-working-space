@@ -1037,3 +1037,117 @@ New admin view at `src/views/admin/FreeSites.jsx`, accessible via sidebar entry 
 - ❌ Do not deploy the Free Sites page changes to the router walled-garden manually via Winbox while the page is open. The 30s page-reload reconciliation will catch the drift, but a concurrent admin edit + Winbox edit can race. Use one or the other.
 - ❌ Do not skip the `session-worker.js` Supabase patch. Without it, expired vouchers stay `'active'` in Supabase and the admin Vouchers tab shows zombie rows. The PATCH is fire-and-forget — if Supabase is unreachable, it logs and moves on; the router-side kick is the source of truth.
 - ❌ Do not write `students.wifi_max_devices` inside `mtkSetMaxDevices`. Keep the router write and the Supabase write in the caller so a Supabase failure can't roll back a successful router write or vice-versa (see also the wallet/debt invariant — same pattern).
+
+---
+
+## 17. Phase 5 — Network console redesign + tier/profile/usage UX (2026-05-20)
+
+Phase 5 replaces the 9-tab `admin_network_v2` console with a sectioned dashboard, adds inline tier CRUD + advanced profile fields, introduces the first reader of `wifi_usage_logs`, populates the adult blocklist, soft-blocks WhatsApp media in the free bundle, and exposes Winbox-equivalent router controls in-app.
+
+### 17.1 New section layout
+
+`src/views/admin/network-v2/Console.jsx` rewritten as a section host:
+
+```
+Hero (sticky) — pulse + Kill Switch
+├─ 1. نشاط مباشر         (LiveOpsSection)   — KPIs + devices/users with NAMES
+├─ 2. استهلاك الإنترنت    (UsageSection)     — per-user bandwidth + date filter + CSV
+├─ 3. الكتالوج            (CatalogSection)   — Packages CRUD + Profiles CRUD
+├─ 4. صلاحيات الوصول      (AccessSection)    — Walled garden + Blocking categories
+├─ 5. إدارة الراوتر        (RouterSection)    — Cookies, restart, lifetime, raw views
+├─ 6. سجل النشاط          (AuditSection)
+└─ 7. أكواد الموظفين       (EmployeesSection)
+```
+
+Each section wraps in `<SectionCard>` — `localStorage`-persisted collapse state per section. Heaviest sections (Live Ops, Usage) default open; rest default closed.
+
+**Shared data plumbing**: Console loads students ONCE (focused `id,name,phone,member_number` SELECT, capped 20k, Realtime-subscribed) and builds a `Map<member_number, student>` (`studentByCode`). Every section that displays a username joins through this map to show the student's name. Single source of truth for the human-readable identity.
+
+### 17.2 File index — Phase 5 additions
+
+| File | Purpose |
+|---|---|
+| `src/views/admin/network-v2/Console.jsx` (rewritten) | Section host + shared data |
+| `src/views/admin/network-v2/sections/SectionCard.jsx` | Collapsible wrapper |
+| `src/views/admin/network-v2/sections/LiveOpsSection.jsx` | KPIs + Devices/Users with names |
+| `src/views/admin/network-v2/sections/UsageSection.jsx` | First reader of `wifi_usage_logs` |
+| `src/views/admin/network-v2/sections/CatalogSection.jsx` | Packages CRUD + Profiles CRUD with advanced opts |
+| `src/views/admin/network-v2/sections/AccessSection.jsx` | Folds WalledGardenTab + BlockingTab |
+| `src/views/admin/network-v2/sections/RouterSection.jsx` | Winbox-parity (cookies, restart, lifetime) |
+| `src/views/admin/network-v2/sections/AuditSection.jsx` | Wraps existing AuditTab |
+| `src/views/admin/network-v2/sections/EmployeesSection.jsx` | Wraps existing EmployeeCodesTab |
+| `src/views/admin/network-v2/components/DateRangeFilter.jsx` | Shared period radio + custom range |
+| `supabase/migrations/20260521000000_phase5_network_console.sql` | Migration (see §17.3) |
+| `mikrotik-bridge/server.js` (modified) | 3 new endpoints (see §17.4) |
+| `mikrotik-bridge-v2/routes/profiles.js` (modified) | Accepts advanced RouterOS fields |
+| `src/lib/mikrotikApi.js` (modified) | New: `mtkClearAllCookies`, `mtkRestartHotspot`, `mtkSetCookieLifetime` |
+
+### 17.3 Schema changes (migration `20260521000000`)
+
+Additive only — no destructive drops.
+
+**`wifi_profiles_v2` new columns** (all nullable):
+- `mac_cookie_timeout text` — RouterOS duration (`3d`, `0s`, ...)
+- `idle_timeout text` — kick after this much idle
+- `keepalive_timeout text`
+- `session_timeout text` — hard session cap
+- `transparent_proxy boolean DEFAULT false`
+- `status_autorefresh text`
+
+`schema.sql` mirrors the new columns inline.
+
+**WhatsApp soft block** — UPDATE on seeded `wg-whatsapp` row. Domains narrowed from `["web.whatsapp.com","*.whatsapp.net","*.whatsapp.com"]` to text/signal endpoints only: `web.whatsapp.com, c./d./e./g./s./mmx.whatsapp.net`. Active sessions still get full WhatsApp via their internet — only pre-auth users on the free bundle are restricted to text/voice.
+
+**Adult blocklist seed** — UPDATE on seeded `cat-adult` row. Populated with ~55 most-trafficked adult domains. Admin enables the category from the Access section to push every domain into `/ip/dns/static` with `address=0.0.0.0` (DNS sinkhole). Admin can extend via custom blocks.
+
+### 17.4 New bridge endpoints
+
+All on **v1 bridge** (`mikrotik-bridge/server.js` port 3456 — single authority for per-user mutations and router lifecycle):
+
+| Path | Method | RouterOS commands |
+|---|---|---|
+| `/api/cookies/clear` | POST | `/ip/hotspot/cookie/print` → loop `remove` each. Returns `{removed}`. |
+| `/api/hotspot/restart` | POST | `/ip/hotspot/disable [find]` → 1.5s wait → `/ip/hotspot/enable [find]`. Returns `{instances}`. |
+| `/api/hotspot/profile/cookie-lifetime` | POST | `{profileName, value}` → `/ip/hotspot/profile/set [find name=<x>] http-cookie-lifetime=<value>`. |
+
+**v2 bridge** `POST /api/v2/profiles` extended to accept (all optional): `macCookieTimeout`, `idleTimeout`, `keepaliveTimeout`, `sessionTimeout`, `statusAutorefresh`, `transparentProxy`. Each maps to RouterOS `/ip/hotspot/user/profile/set` flags. Omitted fields don't overwrite existing values.
+
+### 17.5 Per-user bandwidth UX
+
+`UsageSection` is the first reader of `wifi_usage_logs`. Data is written by `mikrotik-bridge-v2/watchers/usage-aggregator.js` every 5 min (one row per `(username, date)`).
+
+- Date filter: all / today / this week / this month / custom (range)
+- Per-username aggregation across the filtered rows: `bytes_in`, `bytes_out`, total, days
+- Sort by total / down / up / days
+- Student name resolved via `studentByCode` — usernames starting with `WIFI-` show as "قسيمة"
+- CSV export reflects the filtered + sorted view
+
+### 17.6 Console UX rules
+
+- Each `SectionCard` persists open/closed in `localStorage` under `netv2-section-<id>`. Default-open: `live` + `usage`. Rest closed.
+- The hero is sticky — Kill Switch always visible regardless of scroll position.
+- Sections must be wrapped in `<TabErrorBoundary>` (the file is still named that — we deferred the rename to a follow-up PR). A crash in one section doesn't blank the whole console.
+- Profile save is **two-stage**: bridge first (pushes to RouterOS), then Supabase (persistent record). If the bridge call fails, the Supabase write still proceeds so the admin can retry the bridge later — better to have a Supabase row out-of-sync with RouterOS for a few minutes than to lose the admin's input.
+
+### 17.7 Verification
+
+1. `npm run build` clean (no new warnings beyond pre-existing Payroll title + chunk size).
+2. Console renders 7 sections; Live Ops + Usage expanded by default.
+3. Active users/devices show student names from `studentByCode`.
+4. Date filter switches in Usage section re-aggregate the table.
+5. Tier add/edit/delete works from Catalog → Packages.
+6. Profile advanced options modal — set `idle-timeout=15m` on `svs-v2-normal`, save → Winbox confirms via `/ip/hotspot/user/profile/print where name=svs-v2-normal`.
+7. Router section → "Clear all cookies" → confirms two prompts → returns `{removed: N}`. Reconnecting test phone forces re-auth.
+8. Router section → "Cookie lifetime" → set `10m` → Winbox `/ip/hotspot/profile/print where name=hsprof1` shows `http-cookie-lifetime=10m`.
+9. Apply migration, then enable Access section → Adult category → `/ip/dns/static print where comment~"svs-block-adult"` shows ~55 rows.
+10. Apply migration → Free Sites page reflects narrower WhatsApp bundle (no media wildcards).
+11. v1 cashier check-in (`Hub.jsx`) unchanged — still calls `mtkEnable`.
+12. v2 bridge profile upsert continues to accept the basic 4-field body unchanged (backwards-compat).
+
+### What NOT to do in §17
+
+- ❌ Do not enable `transparent-proxy` on RouterOS without first deploying an actual proxy server — the field exists for completeness but flipping it to `yes` without a proxy breaks all client traffic.
+- ❌ Do not set `http-cookie-lifetime=0s` if you want any "remember me" behavior — `0s` disables cookie auth entirely; every reconnect requires the code. Use `10m`–`1h` for normal ops.
+- ❌ Do not delete the old `tabs/*.jsx` files yet. `AccessSection`, `AuditSection`, `EmployeesSection` all still import them. A follow-up cleanup PR will inline or retire.
+- ❌ Do not skip the bridge-first-then-Supabase order in Profile save. If you reverse it and the bridge then fails, you have a Supabase row that doesn't match RouterOS — admin can't tell which is authoritative.
+- ❌ Do not display `wifi_profiles_v2.locked` rows as deletable. The 3 seeded profiles (`svs-v2-normal/staff/voucher`) are referenced by `students.wifi_profile_id` + `staff.wifi_profile_id` foreign keys; deleting them breaks live student records.
